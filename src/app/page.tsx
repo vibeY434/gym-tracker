@@ -370,36 +370,36 @@ export default function GymTrackerPage() {
 
       const sourceForInsert: ExerciseTemplate[] = cloneRows.length
         ? cloneRows.map((row) => {
-            const name = String(row.name ?? "").trim() || "Unbenannt";
-            const reps = toInt(
-              typeof row.reps === "number"
-                ? row.reps
-                : typeof row.reps === "string"
-                  ? Number(row.reps)
-                  : 0,
-            );
-            const sets = toInt(
-              typeof row.sets === "number"
-                ? row.sets
-                : typeof row.sets === "string"
-                  ? Number(row.sets)
-                  : 0,
-            );
-            const weightValue =
-              typeof row.weight === "number"
-                ? row.weight
-                : typeof row.weight === "string"
-                  ? Number(row.weight)
-                  : 0;
+          const name = String(row.name ?? "").trim() || "Unbenannt";
+          const reps = toInt(
+            typeof row.reps === "number"
+              ? row.reps
+              : typeof row.reps === "string"
+                ? Number(row.reps)
+                : 0,
+          );
+          const sets = toInt(
+            typeof row.sets === "number"
+              ? row.sets
+              : typeof row.sets === "string"
+                ? Number(row.sets)
+                : 0,
+          );
+          const weightValue =
+            typeof row.weight === "number"
+              ? row.weight
+              : typeof row.weight === "string"
+                ? Number(row.weight)
+                : 0;
 
-            return {
-              name,
-              sets: isCardio(name) ? 0 : sets,
-              reps: reps,
-              weight: isCardio(name) ? 0 : Math.max(0, roundToWeightStep(weightValue || 0)),
-              notes: typeof row.notes === "string" ? row.notes : "",
-            };
-          })
+          return {
+            name,
+            sets: isCardio(name) ? 0 : sets,
+            reps: reps,
+            weight: isCardio(name) ? 0 : Math.max(0, roundToWeightStep(weightValue || 0)),
+            notes: typeof row.notes === "string" ? row.notes : "",
+          };
+        })
         : DEFAULT_TEMPLATE;
 
       if (sourceForInsert.length) {
@@ -424,7 +424,7 @@ export default function GymTrackerPage() {
       setSelectedSessionId(String(newSession.id));
       setSelectedDate(String(newSession.date));
       await loadRows(String(newSession.id));
-      setNotice("Neue Session erstellt und Werte aus der letzten Session uebernommen.");
+      setNotice("Neue Session erstellt und Werte aus der letzten Session übernommen.");
     } catch (error) {
       withDbErrorHandling(error, "Neue Session konnte nicht erstellt werden");
     } finally {
@@ -514,7 +514,7 @@ export default function GymTrackerPage() {
     const rawName = custom || selected;
 
     if (!rawName) {
-      setNotice("Bitte ein Geraet auswaehlen oder neuen Namen eingeben.");
+      setNotice("Bitte ein Gerät auswählen oder neuen Namen eingeben.");
       return;
     }
 
@@ -532,21 +532,21 @@ export default function GymTrackerPage() {
 
       const payload = cardio
         ? {
-            session_id: selectedSessionId,
-            name,
-            sets: 0,
-            reps: toInt(newMinutes),
-            weight: 0,
-            notes: "",
-          }
+          session_id: selectedSessionId,
+          name,
+          sets: 0,
+          reps: toInt(newMinutes),
+          weight: 0,
+          notes: "",
+        }
         : {
-            session_id: selectedSessionId,
-            name,
-            sets: toInt(newSets),
-            reps: toInt(newReps),
-            weight: Math.max(0, roundToWeightStep(newWeight)),
-            notes: "",
-          };
+          session_id: selectedSessionId,
+          name,
+          sets: toInt(newSets),
+          reps: toInt(newReps),
+          weight: Math.max(0, roundToWeightStep(newWeight)),
+          notes: "",
+        };
 
       const { data, error } = await supabase
         .from("gt_exercises")
@@ -581,6 +581,10 @@ export default function GymTrackerPage() {
   };
 
   const selectedRows = useMemo(() => sortExercises(rows), [rows]);
+
+  const isOldSession =
+    sessions.length > 0 && selectedSessionId !== null && selectedSessionId !== sessions[0].id;
+  const isLocked = dbSetupRequired || supabaseConfigMissing || isOldSession;
 
   if (loading) {
     return <main className="mx-auto max-w-4xl p-4">Lade Daten…</main>;
@@ -660,7 +664,7 @@ export default function GymTrackerPage() {
               onChange={(event) => setSelectedDate(event.target.value)}
               onBlur={saveSessionDate}
               className="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm"
-              disabled={!selectedSessionId || dbSetupRequired || supabaseConfigMissing}
+              disabled={!selectedSessionId || isLocked}
             />
           </label>
         </div>
@@ -681,15 +685,15 @@ export default function GymTrackerPage() {
                     <button
                       type="button"
                       onClick={() => deleteRow(row.id)}
-                      disabled={busy || dbSetupRequired || supabaseConfigMissing}
+                      disabled={busy || isLocked}
                       className="rounded-lg border border-red-300 bg-red-50 px-2 py-2 text-sm font-semibold text-red-700 disabled:cursor-not-allowed disabled:opacity-50"
-                      aria-label={`Zeile ${row.name} loeschen`}
+                      aria-label={`Zeile ${row.name} löschen`}
                     >
                       -
                     </button>
 
                     <label className="space-y-1">
-                      <span className="text-xs font-medium text-zinc-600">Geraet</span>
+                      <span className="text-xs font-medium text-zinc-600">Gerät</span>
                       <input
                         list="device-options"
                         value={row.name}
@@ -715,14 +719,14 @@ export default function GymTrackerPage() {
                               ),
                             );
                           } catch (error) {
-                            withDbErrorHandling(error, "Geraet konnte nicht gespeichert werden");
+                            withDbErrorHandling(error, "Gerät konnte nicht gespeichert werden");
                             if (selectedSessionId) {
                               await loadRows(selectedSessionId);
                             }
                           }
                         }}
                         className="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm"
-                        disabled={dbSetupRequired || supabaseConfigMissing}
+                        disabled={isLocked}
                       />
                     </label>
                   </div>
@@ -761,7 +765,7 @@ export default function GymTrackerPage() {
                             }
                           }}
                           className="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm"
-                          disabled={dbSetupRequired || supabaseConfigMissing}
+                          disabled={isLocked}
                         />
                       </label>
 
@@ -769,7 +773,7 @@ export default function GymTrackerPage() {
                         type="button"
                         onClick={() => changeCardioMinutes(row, -CARDIO_STEP)}
                         className="rounded-lg border border-zinc-300 bg-zinc-100 px-3 py-2 text-sm font-semibold"
-                        disabled={dbSetupRequired || supabaseConfigMissing}
+                        disabled={isLocked}
                       >
                         -{CARDIO_STEP}
                       </button>
@@ -777,7 +781,7 @@ export default function GymTrackerPage() {
                         type="button"
                         onClick={() => changeCardioMinutes(row, CARDIO_STEP)}
                         className="rounded-lg border border-zinc-900 bg-zinc-900 px-3 py-2 text-sm font-semibold text-white"
-                        disabled={dbSetupRequired || supabaseConfigMissing}
+                        disabled={isLocked}
                       >
                         +{CARDIO_STEP}
                       </button>
@@ -785,7 +789,7 @@ export default function GymTrackerPage() {
                   ) : (
                     <div className="mt-2 flex flex-wrap items-end gap-2">
                       <label className="w-[92px] space-y-1">
-                        <span className="text-xs font-medium text-zinc-600">Saetze</span>
+                        <span className="text-xs font-medium text-zinc-600">Sätze</span>
                         <input
                           type="number"
                           min={0}
@@ -798,14 +802,14 @@ export default function GymTrackerPage() {
                             try {
                               await saveRowPatch(row.id, { sets });
                             } catch (error) {
-                              withDbErrorHandling(error, "Saetze konnten nicht gespeichert werden");
+                              withDbErrorHandling(error, "Sätze konnten nicht gespeichert werden");
                               if (selectedSessionId) {
                                 await loadRows(selectedSessionId);
                               }
                             }
                           }}
                           className="w-full rounded-lg border border-zinc-300 px-2 py-2 text-sm"
-                          disabled={dbSetupRequired || supabaseConfigMissing}
+                          disabled={isLocked}
                         />
                       </label>
 
@@ -833,7 +837,7 @@ export default function GymTrackerPage() {
                             }
                           }}
                           className="w-full rounded-lg border border-zinc-300 px-2 py-2 text-sm"
-                          disabled={dbSetupRequired || supabaseConfigMissing}
+                          disabled={isLocked}
                         />
                       </label>
 
@@ -845,7 +849,7 @@ export default function GymTrackerPage() {
                         type="button"
                         onClick={() => changeWeight(row, -WEIGHT_STEP)}
                         className="rounded-lg border border-zinc-300 bg-zinc-100 px-3 py-2 text-sm font-semibold"
-                        disabled={dbSetupRequired || supabaseConfigMissing}
+                        disabled={isLocked}
                       >
                         -
                       </button>
@@ -853,7 +857,7 @@ export default function GymTrackerPage() {
                         type="button"
                         onClick={() => changeWeight(row, WEIGHT_STEP)}
                         className="rounded-lg border border-zinc-900 bg-zinc-900 px-3 py-2 text-sm font-semibold text-white"
-                        disabled={dbSetupRequired || supabaseConfigMissing}
+                        disabled={isLocked}
                       >
                         +
                       </button>
@@ -876,44 +880,44 @@ export default function GymTrackerPage() {
 
       <section className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
         <div className="flex items-center justify-between gap-3">
-          <h2 className="text-base font-semibold">+ Zeile hinzufuegen</h2>
+          <h2 className="text-base font-semibold">+ Zeile hinzufügen</h2>
         </div>
 
         <div className="mt-3 space-y-3">
           <label className="block space-y-1">
-            <span className="text-xs font-medium text-zinc-600">Gespeichertes Geraet</span>
+            <span className="text-xs font-medium text-zinc-600">Gespeichertes Gerät</span>
             <input
               list="device-options"
               value={newExistingDevice}
               onChange={(event) => setNewExistingDevice(event.target.value)}
               placeholder="z. B. Seated Leg Press"
               className="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm"
-              disabled={dbSetupRequired || supabaseConfigMissing}
+              disabled={isLocked}
             />
           </label>
 
           <label className="block space-y-1">
-            <span className="text-xs font-medium text-zinc-600">Oder neues Geraet</span>
+            <span className="text-xs font-medium text-zinc-600">Oder neues Gerät</span>
             <input
               type="text"
               value={newCustomDevice}
               onChange={(event) => setNewCustomDevice(event.target.value)}
-              placeholder="Neuen Geraetenamen eingeben"
+              placeholder="Neuen Gerätenamen eingeben"
               className="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm"
-              disabled={dbSetupRequired || supabaseConfigMissing}
+              disabled={isLocked}
             />
           </label>
 
           <div className="flex flex-wrap gap-2">
             <label className="w-[92px] space-y-1">
-              <span className="text-xs font-medium text-zinc-600">Saetze</span>
+              <span className="text-xs font-medium text-zinc-600">Sätze</span>
               <input
                 type="number"
                 min={0}
                 value={newSets}
                 onChange={(event) => setNewSets(toInt(Number(event.target.value)))}
                 className="w-full rounded-lg border border-zinc-300 px-2 py-2 text-sm"
-                disabled={dbSetupRequired || supabaseConfigMissing}
+                disabled={isLocked}
               />
             </label>
 
@@ -925,7 +929,7 @@ export default function GymTrackerPage() {
                 value={newReps}
                 onChange={(event) => setNewReps(toInt(Number(event.target.value)))}
                 className="w-full rounded-lg border border-zinc-300 px-2 py-2 text-sm"
-                disabled={dbSetupRequired || supabaseConfigMissing}
+                disabled={isLocked}
               />
             </label>
 
@@ -937,7 +941,7 @@ export default function GymTrackerPage() {
                 value={newMinutes}
                 onChange={(event) => setNewMinutes(toInt(Number(event.target.value)))}
                 className="w-full rounded-lg border border-zinc-300 px-2 py-2 text-sm"
-                disabled={dbSetupRequired || supabaseConfigMissing}
+                disabled={isLocked}
               />
             </label>
 
@@ -949,7 +953,7 @@ export default function GymTrackerPage() {
               type="button"
               onClick={() => setNewWeight((value) => Math.max(0, roundToWeightStep(value - WEIGHT_STEP)))}
               className="rounded-lg border border-zinc-300 bg-zinc-100 px-3 py-2 text-sm font-semibold self-end"
-              disabled={dbSetupRequired || supabaseConfigMissing}
+              disabled={isLocked}
             >
               -
             </button>
@@ -957,7 +961,7 @@ export default function GymTrackerPage() {
               type="button"
               onClick={() => setNewWeight((value) => roundToWeightStep(value + WEIGHT_STEP))}
               className="rounded-lg border border-zinc-900 bg-zinc-900 px-3 py-2 text-sm font-semibold text-white self-end"
-              disabled={dbSetupRequired || supabaseConfigMissing}
+              disabled={isLocked}
             >
               +
             </button>
@@ -966,10 +970,10 @@ export default function GymTrackerPage() {
           <button
             type="button"
             onClick={addRow}
-            disabled={!selectedSessionId || busy || dbSetupRequired || supabaseConfigMissing}
+            disabled={!selectedSessionId || busy || isLocked}
             className="w-full rounded-xl bg-zinc-900 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:bg-zinc-400"
           >
-            Zeile hinzufuegen
+            Zeile hinzufügen
           </button>
         </div>
       </section>
