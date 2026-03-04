@@ -6,6 +6,8 @@
 - **Schreibschutz für Historie:** Alte Sessions sind nun im "Read-only" Modus (deaktivierte Inputs), um versehentliche Änderungen am Verlauf zu verhindern.
 - **Umlaute-Fix:** Alle UI-Texte auf korrekte deutsche Umlaute (ä, ö, ü) umgestellt.
 - **Auto-Save Stabilität:** Sicherstellung, dass nur die aktuellste Session bearbeitet werden kann.
+- **Undo-Funktion:** Gelöschte Übungen können nun innerhalb von 5 Sekunden per Button wiederhergestellt werden.
+- **Performance Autocomplete:** Übungsvorschläge werden nun effizienter (ilike + Limit) vom Backend geladen.
 
 ## v1.0.1 — 2026-03-04
 

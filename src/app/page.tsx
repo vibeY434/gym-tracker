@@ -147,8 +147,9 @@ export default function GymTrackerPage() {
 
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [notice, setNotice] = useState<React.ReactNode | null>(null);
   const [dbSetupRequired, setDbSetupRequired] = useState(false);
+  const [deletedExercise, setDeletedExercise] = useState<Exercise | null>(null);
 
   const updateLocalRow = (exerciseId: string, patch: Partial<Exercise>) => {
     setRows((current) =>
@@ -172,15 +173,21 @@ export default function GymTrackerPage() {
     setNotice(`${fallback}: ${errorMessage(error)}`);
   };
 
-  const loadDeviceOptions = useCallback(async () => {
+  const loadDeviceOptions = useCallback(async (searchTerm = "") => {
     if (!supabase) {
       return;
     }
 
-    const { data, error } = await supabase
+    let query = supabase
       .from("gt_exercises")
       .select("name")
-      .limit(2000);
+      .limit(50);
+
+    if (searchTerm.trim()) {
+      query = query.ilike("name", `%${searchTerm.trim()}%`);
+    }
+
+    const { data, error } = await query;
 
     if (error) {
       throw error;
@@ -441,6 +448,12 @@ export default function GymTrackerPage() {
       setBusy(true);
       setNotice(null);
 
+      // Speichere die gelöschte Übung für Undo
+      const exerciseToDelete = rows.find(row => row.id === exerciseId);
+      if (exerciseToDelete) {
+        setDeletedExercise(exerciseToDelete);
+      }
+
       const { error } = await supabase.from("gt_exercises").delete().eq("id", exerciseId);
 
       if (error) {
@@ -448,6 +461,25 @@ export default function GymTrackerPage() {
       }
 
       setRows((current) => current.filter((row) => row.id !== exerciseId));
+
+      // Zeige Undo-Nachricht an (JSX statt HTML-String)
+      setNotice(
+        <div className="flex items-center">
+          Übung gelöscht.
+          <button
+            onClick={undoDelete}
+            className="ml-2 text-blue-600 underline decoration-blue-600/30 underline-offset-4 hover:text-blue-800"
+          >
+            Rückgängig machen
+          </button>
+        </div>
+      );
+
+      // Automatisches Verstecken nach 5 Sekunden
+      setTimeout(() => {
+        setDeletedExercise(null);
+        setNotice(null);
+      }, 5000);
     } catch (error) {
       withDbErrorHandling(error, "Zeile konnte nicht geloescht werden");
     } finally {
@@ -575,6 +607,36 @@ export default function GymTrackerPage() {
       }
     } catch (error) {
       withDbErrorHandling(error, "Neue Zeile konnte nicht hinzugefuegt werden");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const undoDelete = async () => {
+    if (!supabase || !deletedExercise || !selectedSessionId) {
+      return;
+    }
+
+    try {
+      setBusy(true);
+      setNotice(null);
+
+      const payload = {
+        ...deletedExercise,
+        session_id: selectedSessionId
+      };
+
+      const { error } = await supabase.from("gt_exercises").insert([payload]);
+
+      if (error) {
+        throw error;
+      }
+
+      setRows(prev => sortExercises([...prev, deletedExercise]));
+      setDeletedExercise(null);
+      setNotice("Löschung rückgängig gemacht.");
+    } catch (error) {
+      withDbErrorHandling(error, "Undo fehlgeschlagen");
     } finally {
       setBusy(false);
     }
@@ -980,3 +1042,5 @@ export default function GymTrackerPage() {
     </main>
   );
 }
+
+
