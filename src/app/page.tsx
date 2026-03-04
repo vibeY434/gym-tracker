@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { supabase } from "../lib/supabase";
+import { supabase, supabaseConfigMissing } from "../lib/supabase";
 
 type Session = {
   id: string;
@@ -12,13 +12,13 @@ type Exercise = {
   id: string;
   session_id: string;
   name: string;
-  sets: number;
-  reps: number;
-  weight: number;
-  notes: string;
+  sets: number | null;
+  reps: number | null;
+  weight: number | null;
+  notes: string | null;
 };
 
-type ExerciseDraft = {
+type ExerciseTemplate = {
   name: string;
   sets: number;
   reps: number;
@@ -26,21 +26,34 @@ type ExerciseDraft = {
   notes: string;
 };
 
-const DEFAULT_EXERCISE_ROWS: ExerciseDraft[] = [
-  { name: "Cardio", sets: 100, reps: 20, weight: 0, notes: "" },
-  { name: "Seated leg press", sets: 5, reps: 10, weight: 0, notes: "" },
-  { name: "Leg extension", sets: 5, reps: 10, weight: 0, notes: "" },
-  { name: "Seated leg curl", sets: 5, reps: 10, weight: 0, notes: "" },
-  { name: "Abdominal", sets: 5, reps: 10, weight: 0, notes: "" },
-  { name: "Back extension", sets: 5, reps: 10, weight: 0, notes: "" },
-  { name: "Hip adduction", sets: 5, reps: 10, weight: 0, notes: "" },
-  { name: "Hip abduction", sets: 5, reps: 10, weight: 0, notes: "" },
+const WEIGHT_STEP = 2.5;
+const CARDIO_STEP = 5;
+
+const DEFAULT_TEMPLATE: ExerciseTemplate[] = [
+  { name: "Cardio", sets: 0, reps: 20, weight: 0, notes: "" },
+  { name: "Seated Leg Press", sets: 5, reps: 10, weight: 60, notes: "" },
+  { name: "Leg Extension", sets: 5, reps: 10, weight: 45, notes: "" },
+  { name: "Seated Leg Curl", sets: 5, reps: 10, weight: 30, notes: "" },
+  { name: "Abdominal", sets: 5, reps: 10, weight: 45, notes: "" },
+  { name: "Back Extension", sets: 5, reps: 10, weight: 65, notes: "" },
+  { name: "Hip Adduction", sets: 5, reps: 10, weight: 65, notes: "" },
+  { name: "Hip Abduction", sets: 5, reps: 10, weight: 80, notes: "" },
 ];
 
-const WEIGHT_STEP = 2.5;
+const DEFAULT_DEVICE_NAMES = DEFAULT_TEMPLATE.map((item) => item.name);
 
-const roundToStep = (value: number, step = WEIGHT_STEP) => {
-  return Math.round(value / step) * step;
+const normalize = (value: string) => value.trim().toLowerCase();
+const isCardio = (name: string) => normalize(name) === "cardio";
+
+const toIsoDate = (date = new Date()) => {
+  const tzOffsetInMs = date.getTimezoneOffset() * 60_000;
+  return new Date(date.getTime() - tzOffsetInMs).toISOString().slice(0, 10);
+};
+
+const toInt = (value: number | null | undefined) => Math.max(0, Math.floor(value ?? 0));
+
+const roundToWeightStep = (value: number) => {
+  return Math.round(value / WEIGHT_STEP) * WEIGHT_STEP;
 };
 
 const formatWeight = (value: number) => {
@@ -50,32 +63,148 @@ const formatWeight = (value: number) => {
   }).format(value);
 };
 
-const toIsoDate = (date = new Date()) => {
-  const tzOffsetInMs = date.getTimezoneOffset() * 60_000;
-  return new Date(date.getTime() - tzOffsetInMs).toISOString().slice(0, 10);
+const errorCode = (error: unknown) => {
+  if (error && typeof error === "object" && "code" in error) {
+    const code = (error as { code?: unknown }).code;
+    return typeof code === "string" ? code : null;
+  }
+  return null;
 };
 
-const initialExerciseDraft: ExerciseDraft = {
-  name: "",
-  sets: 5,
-  reps: 10,
-  weight: 0,
-  notes: "",
+const errorMessage = (error: unknown) => {
+  if (error && typeof error === "object" && "message" in error) {
+    const message = (error as { message?: unknown }).message;
+    return typeof message === "string" ? message : "Unbekannter Fehler";
+  }
+  return "Unbekannter Fehler";
 };
 
-export default function GymTracker() {
+const isMissingTableError = (error: unknown) => errorCode(error) === "PGRST205";
+
+const sortExercises = (rows: Exercise[]) => {
+  const orderIndex = new Map(
+    DEFAULT_TEMPLATE.map((item, index) => [normalize(item.name), index]),
+  );
+
+  return [...rows].sort((a, b) => {
+    const aIndex = orderIndex.get(normalize(a.name));
+    const bIndex = orderIndex.get(normalize(b.name));
+
+    if (aIndex !== undefined && bIndex !== undefined) {
+      return aIndex - bIndex;
+    }
+
+    if (aIndex !== undefined) {
+      return -1;
+    }
+
+    if (bIndex !== undefined) {
+      return 1;
+    }
+
+    return a.name.localeCompare(b.name, "de");
+  });
+};
+
+const readExercise = (row: Record<string, unknown>): Exercise => {
+  const numberOrNull = (value: unknown) => {
+    if (typeof value === "number") {
+      return value;
+    }
+
+    if (typeof value === "string") {
+      const parsed = Number(value);
+      return Number.isFinite(parsed) ? parsed : null;
+    }
+
+    return null;
+  };
+
+  return {
+    id: String(row.id),
+    session_id: String(row.session_id),
+    name: String(row.name ?? ""),
+    sets: numberOrNull(row.sets),
+    reps: numberOrNull(row.reps),
+    weight: numberOrNull(row.weight),
+    notes: typeof row.notes === "string" ? row.notes : null,
+  };
+};
+
+export default function GymTrackerPage() {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
-  const [selectedSessionDate, setSelectedSessionDate] = useState(toIsoDate());
-  const [exercises, setExercises] = useState<Exercise[]>([]);
-  const [newExercise, setNewExercise] = useState<ExerciseDraft>(initialExerciseDraft);
+  const [selectedDate, setSelectedDate] = useState(toIsoDate());
+  const [rows, setRows] = useState<Exercise[]>([]);
+
+  const [deviceOptions, setDeviceOptions] = useState<string[]>(DEFAULT_DEVICE_NAMES);
+  const [newExistingDevice, setNewExistingDevice] = useState("");
+  const [newCustomDevice, setNewCustomDevice] = useState("");
+  const [newSets, setNewSets] = useState(5);
+  const [newReps, setNewReps] = useState(10);
+  const [newWeight, setNewWeight] = useState(0);
+  const [newMinutes, setNewMinutes] = useState(20);
+
   const [loading, setLoading] = useState(true);
-  const [submitting, setSubmitting] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [dbSetupRequired, setDbSetupRequired] = useState(false);
+
+  const updateLocalRow = (exerciseId: string, patch: Partial<Exercise>) => {
+    setRows((current) =>
+      sortExercises(
+        current.map((row) => (row.id === exerciseId ? { ...row, ...patch } : row)),
+      ),
+    );
+  };
+
+  const withDbErrorHandling = (error: unknown, fallback: string) => {
+    console.error(fallback, error);
+
+    if (isMissingTableError(error)) {
+      setDbSetupRequired(true);
+      setNotice(
+        "Supabase-Tabellen fehlen. Fuehre bitte schema.sql (und optional seed-data.sql) im Supabase SQL Editor aus.",
+      );
+      return;
+    }
+
+    setNotice(`${fallback}: ${errorMessage(error)}`);
+  };
+
+  const loadDeviceOptions = useCallback(async () => {
+    if (!supabase) {
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from("gt_exercises")
+      .select("name")
+      .limit(2000);
+
+    if (error) {
+      throw error;
+    }
+
+    const names = new Set(DEFAULT_DEVICE_NAMES);
+
+    (data ?? []).forEach((entry) => {
+      const name = String(entry.name ?? "").trim();
+      if (name) {
+        names.add(name);
+      }
+    });
+
+    setDeviceOptions(Array.from(names).sort((a, b) => a.localeCompare(b, "de")));
+  }, []);
 
   const loadSessions = useCallback(async () => {
+    if (!supabase) {
+      return;
+    }
+
     const { data, error } = await supabase
-      .from("sessions")
+      .from("gt_sessions")
       .select("id, date")
       .order("date", { ascending: false });
 
@@ -83,13 +212,17 @@ export default function GymTracker() {
       throw error;
     }
 
-    const nextSessions = data ?? [];
+    const nextSessions = (data ?? []).map((session) => ({
+      id: String(session.id),
+      date: String(session.date),
+    }));
+
     setSessions(nextSessions);
 
     if (!nextSessions.length) {
       setSelectedSessionId(null);
-      setExercises([]);
-      setSelectedSessionDate(toIsoDate());
+      setSelectedDate(toIsoDate());
+      setRows([]);
       return;
     }
 
@@ -101,147 +234,118 @@ export default function GymTracker() {
     });
   }, []);
 
-  const loadExercises = useCallback(async (sessionId: string) => {
+  const loadRows = useCallback(async (sessionId: string) => {
+    if (!supabase) {
+      return;
+    }
+
     const { data, error } = await supabase
-      .from("exercises")
-      .select("id, session_id, name, sets, reps, weight, notes")
-      .eq("session_id", sessionId)
-      .order("created_at", { ascending: true });
+      .from("gt_exercises")
+      .select("*")
+      .eq("session_id", sessionId);
 
     if (error) {
       throw error;
     }
 
-    setExercises(data ?? []);
+    const parsedRows = (data ?? []).map((row) => readExercise(row as Record<string, unknown>));
+    setRows(sortExercises(parsedRows));
   }, []);
 
   useEffect(() => {
-    const run = async () => {
+    const boot = async () => {
+      if (supabaseConfigMissing || !supabase) {
+        setNotice(
+          "Supabase ist nicht konfiguriert. Setze NEXT_PUBLIC_SUPABASE_URL und NEXT_PUBLIC_SUPABASE_ANON_KEY.",
+        );
+        setLoading(false);
+        return;
+      }
+
       setLoading(true);
-      setMessage(null);
+      setNotice(null);
+      setDbSetupRequired(false);
+
       try {
-        await loadSessions();
+        await Promise.all([loadSessions(), loadDeviceOptions()]);
       } catch (error) {
-        console.error("Fehler beim Laden der Sessions:", error);
-        setMessage("Sessions konnten nicht geladen werden.");
+        withDbErrorHandling(error, "Initiales Laden fehlgeschlagen");
       } finally {
         setLoading(false);
       }
     };
 
-    run();
-  }, [loadSessions]);
+    boot();
+  }, [loadDeviceOptions, loadSessions]);
 
   useEffect(() => {
     if (!selectedSessionId) {
       return;
     }
 
-    const session = sessions.find((item) => item.id === selectedSessionId);
-    if (session) {
-      setSelectedSessionDate(session.date);
+    const selected = sessions.find((session) => session.id === selectedSessionId);
+    if (selected) {
+      setSelectedDate(selected.date);
     }
 
     const run = async () => {
-      setMessage(null);
       try {
-        await loadExercises(selectedSessionId);
+        await loadRows(selectedSessionId);
       } catch (error) {
-        console.error("Fehler beim Laden der Übungen:", error);
-        setMessage("Übungen konnten nicht geladen werden.");
+        withDbErrorHandling(error, "Uebungen konnten nicht geladen werden");
       }
     };
 
     run();
-  }, [loadExercises, selectedSessionId, sessions]);
+  }, [loadRows, selectedSessionId, sessions]);
 
-  const sortedExercises = useMemo(() => {
-    const cardio = exercises.find(
-      (exercise) => exercise.name.toLowerCase() === "cardio",
-    );
-    const strength = exercises.filter(
-      (exercise) => exercise.name.toLowerCase() !== "cardio",
-    );
-    return { cardio, strength };
-  }, [exercises]);
-  const cardioExercise = sortedExercises.cardio;
-
-  const updateExercise = async (exerciseId: string, patch: Partial<Exercise>) => {
-    const { error } = await supabase.from("exercises").update(patch).eq("id", exerciseId);
-    if (error) {
-      throw error;
-    }
-
-    setExercises((current) =>
-      current.map((exercise) =>
-        exercise.id === exerciseId ? { ...exercise, ...patch } : exercise,
-      ),
-    );
-  };
-
-  const adjustWeight = async (exerciseId: string, delta: number) => {
-    const target = exercises.find((exercise) => exercise.id === exerciseId);
-    if (!target) {
-      return;
-    }
-
-    const nextWeight = Math.max(0, roundToStep(target.weight + delta));
-
-    try {
-      await updateExercise(exerciseId, { weight: nextWeight });
-    } catch (error) {
-      console.error("Fehler beim Aktualisieren des Gewichts:", error);
-      setMessage("Gewicht konnte nicht gespeichert werden.");
-    }
-  };
-
-  const updateSessionDate = async () => {
-    if (!selectedSessionId) {
+  const saveSessionDate = async () => {
+    if (!supabase || !selectedSessionId) {
       return;
     }
 
     try {
-      setSubmitting(true);
-      setMessage(null);
+      setBusy(true);
+      setNotice(null);
+
       const { error } = await supabase
-        .from("sessions")
-        .update({ date: selectedSessionDate })
+        .from("gt_sessions")
+        .update({ date: selectedDate })
         .eq("id", selectedSessionId);
 
       if (error) {
         throw error;
       }
 
-      setSessions((current) => {
-        const updated = current
+      setSessions((current) =>
+        [...current]
           .map((session) =>
-            session.id === selectedSessionId
-              ? { ...session, date: selectedSessionDate }
-              : session,
+            session.id === selectedSessionId ? { ...session, date: selectedDate } : session,
           )
-          .sort((a, b) => b.date.localeCompare(a.date));
-
-        return updated;
-      });
+          .sort((a, b) => b.date.localeCompare(a.date)),
+      );
     } catch (error) {
-      console.error("Fehler beim Aktualisieren des Datums:", error);
-      setMessage("Datum konnte nicht gespeichert werden.");
+      withDbErrorHandling(error, "Datum konnte nicht gespeichert werden");
     } finally {
-      setSubmitting(false);
+      setBusy(false);
     }
   };
 
   const createNewSession = async () => {
+    if (!supabase) {
+      return;
+    }
+
     try {
-      setSubmitting(true);
-      setMessage(null);
+      setBusy(true);
+      setNotice(null);
 
-      const sourceSessionId = sessions[0]?.id;
-      const sessionDate = toIsoDate();
+      const sourceSessionId = sessions[0]?.id ?? null;
+      const today = toIsoDate();
 
-      const { data: insertedSession, error: sessionError } = await supabase
-        .from("sessions")
-        .insert([{ date: sessionDate }])
+      const { data: newSession, error: sessionError } = await supabase
+        .from("gt_sessions")
+        .insert([{ date: today }])
         .select("id, date")
         .single();
 
@@ -249,492 +353,626 @@ export default function GymTracker() {
         throw sessionError;
       }
 
+      let cloneRows: Array<Record<string, unknown>> = [];
+
       if (sourceSessionId) {
-        const { data: sourceExercises, error: sourceError } = await supabase
-          .from("exercises")
-          .select("name, sets, reps, weight, notes")
-          .eq("session_id", sourceSessionId)
-          .order("created_at", { ascending: true });
+        const { data: sourceRows, error: sourceError } = await supabase
+          .from("gt_exercises")
+          .select("*")
+          .eq("session_id", sourceSessionId);
 
         if (sourceError) {
           throw sourceError;
         }
 
-        const cloneSource = sourceExercises?.length
-          ? sourceExercises
-          : DEFAULT_EXERCISE_ROWS;
+        cloneRows = (sourceRows ?? []).map((row) => row as Record<string, unknown>);
+      }
 
-        const exercisesToInsert = cloneSource.map((exercise) => ({
-          session_id: insertedSession.id,
-          name: exercise.name,
-          sets: exercise.sets,
-          reps: exercise.reps,
-          weight: exercise.weight,
-          notes: exercise.notes ?? "",
+      const sourceForInsert: ExerciseTemplate[] = cloneRows.length
+        ? cloneRows.map((row) => {
+            const name = String(row.name ?? "").trim() || "Unbenannt";
+            const reps = toInt(
+              typeof row.reps === "number"
+                ? row.reps
+                : typeof row.reps === "string"
+                  ? Number(row.reps)
+                  : 0,
+            );
+            const sets = toInt(
+              typeof row.sets === "number"
+                ? row.sets
+                : typeof row.sets === "string"
+                  ? Number(row.sets)
+                  : 0,
+            );
+            const weightValue =
+              typeof row.weight === "number"
+                ? row.weight
+                : typeof row.weight === "string"
+                  ? Number(row.weight)
+                  : 0;
+
+            return {
+              name,
+              sets: isCardio(name) ? 0 : sets,
+              reps: reps,
+              weight: isCardio(name) ? 0 : Math.max(0, roundToWeightStep(weightValue || 0)),
+              notes: typeof row.notes === "string" ? row.notes : "",
+            };
+          })
+        : DEFAULT_TEMPLATE;
+
+      if (sourceForInsert.length) {
+        const payload = sourceForInsert.map((item) => ({
+          session_id: newSession.id,
+          name: item.name,
+          sets: toInt(item.sets),
+          reps: toInt(item.reps),
+          weight: Math.max(0, roundToWeightStep(item.weight)),
+          notes: item.notes,
         }));
 
-        if (exercisesToInsert.length) {
-          const { error: exerciseInsertError } = await supabase
-            .from("exercises")
-            .insert(exercisesToInsert);
+        const { error: insertRowsError } = await supabase.from("gt_exercises").insert(payload);
 
-          if (exerciseInsertError) {
-            throw exerciseInsertError;
-          }
-        }
-      } else {
-        const exercisesToInsert = DEFAULT_EXERCISE_ROWS.map((exercise) => ({
-          session_id: insertedSession.id,
-          ...exercise,
-        }));
-
-        const { error: exerciseInsertError } = await supabase
-          .from("exercises")
-          .insert(exercisesToInsert);
-
-        if (exerciseInsertError) {
-          throw exerciseInsertError;
+        if (insertRowsError) {
+          throw insertRowsError;
         }
       }
 
       await loadSessions();
-      setSelectedSessionId(insertedSession.id);
-      setSelectedSessionDate(insertedSession.date);
+      await loadDeviceOptions();
+      setSelectedSessionId(String(newSession.id));
+      setSelectedDate(String(newSession.date));
+      await loadRows(String(newSession.id));
+      setNotice("Neue Session erstellt und Werte aus der letzten Session uebernommen.");
     } catch (error) {
-      console.error("Fehler beim Erstellen einer Session:", error);
-      setMessage("Neues Training konnte nicht erstellt werden.");
+      withDbErrorHandling(error, "Neue Session konnte nicht erstellt werden");
     } finally {
-      setSubmitting(false);
+      setBusy(false);
     }
   };
 
-  const addExercise = async () => {
-    if (!selectedSessionId) {
-      setMessage("Bitte zuerst eine Session auswählen.");
-      return;
-    }
-
-    const trimmedName = newExercise.name.trim();
-    if (!trimmedName) {
-      setMessage("Bitte einen Gerätenamen eingeben.");
+  const deleteRow = async (exerciseId: string) => {
+    if (!supabase) {
       return;
     }
 
     try {
-      setSubmitting(true);
-      setMessage(null);
+      setBusy(true);
+      setNotice(null);
 
-      const payload = {
-        session_id: selectedSessionId,
-        name: trimmedName,
-        sets: Math.max(0, Math.floor(newExercise.sets)),
-        reps: Math.max(0, Math.floor(newExercise.reps)),
-        weight: Math.max(0, roundToStep(newExercise.weight)),
-        notes: newExercise.notes.trim(),
-      };
+      const { error } = await supabase.from("gt_exercises").delete().eq("id", exerciseId);
+
+      if (error) {
+        throw error;
+      }
+
+      setRows((current) => current.filter((row) => row.id !== exerciseId));
+    } catch (error) {
+      withDbErrorHandling(error, "Zeile konnte nicht geloescht werden");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const saveRowPatch = async (exerciseId: string, patch: Partial<Exercise>) => {
+    if (!supabase) {
+      return;
+    }
+
+    const dbPatch = {
+      ...(patch.name !== undefined ? { name: patch.name } : {}),
+      ...(patch.sets !== undefined ? { sets: patch.sets } : {}),
+      ...(patch.reps !== undefined ? { reps: patch.reps } : {}),
+      ...(patch.weight !== undefined ? { weight: patch.weight } : {}),
+      ...(patch.notes !== undefined ? { notes: patch.notes } : {}),
+    };
+
+    const { error } = await supabase.from("gt_exercises").update(dbPatch).eq("id", exerciseId);
+    if (error) {
+      throw error;
+    }
+  };
+
+  const changeWeight = async (row: Exercise, delta: number) => {
+    const current = row.weight ?? 0;
+    const next = Math.max(0, roundToWeightStep(current + delta));
+    updateLocalRow(row.id, { weight: next });
+
+    try {
+      await saveRowPatch(row.id, { weight: next });
+    } catch (error) {
+      withDbErrorHandling(error, "Gewicht konnte nicht gespeichert werden");
+      if (selectedSessionId) {
+        await loadRows(selectedSessionId);
+      }
+    }
+  };
+
+  const changeCardioMinutes = async (row: Exercise, delta: number) => {
+    const current = row.reps ?? 0;
+    const next = Math.max(0, current + delta);
+    updateLocalRow(row.id, { reps: next, sets: 0, weight: 0 });
+
+    try {
+      await saveRowPatch(row.id, { reps: next, sets: 0, weight: 0 });
+    } catch (error) {
+      withDbErrorHandling(error, "Cardio-Minuten konnten nicht gespeichert werden");
+      if (selectedSessionId) {
+        await loadRows(selectedSessionId);
+      }
+    }
+  };
+
+  const addRow = async () => {
+    if (!supabase || !selectedSessionId) {
+      return;
+    }
+
+    const custom = newCustomDevice.trim();
+    const selected = newExistingDevice.trim();
+    const rawName = custom || selected;
+
+    if (!rawName) {
+      setNotice("Bitte ein Geraet auswaehlen oder neuen Namen eingeben.");
+      return;
+    }
+
+    const name = rawName;
+    const cardio = isCardio(name);
+
+    if (cardio && rows.some((row) => isCardio(row.name))) {
+      setNotice("Cardio ist bereits vorhanden. Bitte die bestehende Cardio-Zeile nutzen.");
+      return;
+    }
+
+    try {
+      setBusy(true);
+      setNotice(null);
+
+      const payload = cardio
+        ? {
+            session_id: selectedSessionId,
+            name,
+            sets: 0,
+            reps: toInt(newMinutes),
+            weight: 0,
+            notes: "",
+          }
+        : {
+            session_id: selectedSessionId,
+            name,
+            sets: toInt(newSets),
+            reps: toInt(newReps),
+            weight: Math.max(0, roundToWeightStep(newWeight)),
+            notes: "",
+          };
 
       const { data, error } = await supabase
-        .from("exercises")
+        .from("gt_exercises")
         .insert([payload])
-        .select("id, session_id, name, sets, reps, weight, notes")
+        .select("*")
         .single();
 
       if (error) {
         throw error;
       }
 
-      setExercises((current) => [...current, data]);
-      setNewExercise(initialExerciseDraft);
+      const inserted = readExercise(data as Record<string, unknown>);
+      setRows((current) => sortExercises([...current, inserted]));
+      setDeviceOptions((current) =>
+        Array.from(new Set([...current, name])).sort((a, b) => a.localeCompare(b, "de")),
+      );
+
+      setNewCustomDevice("");
+      if (!custom) {
+        setNewExistingDevice(name);
+      }
+      if (!cardio) {
+        setNewSets(5);
+        setNewReps(10);
+        setNewWeight(0);
+      }
     } catch (error) {
-      console.error("Fehler beim Hinzufügen der Übung:", error);
-      setMessage("Übung konnte nicht hinzugefügt werden.");
+      withDbErrorHandling(error, "Neue Zeile konnte nicht hinzugefuegt werden");
     } finally {
-      setSubmitting(false);
+      setBusy(false);
     }
   };
 
+  const selectedRows = useMemo(() => sortExercises(rows), [rows]);
+
   if (loading) {
-    return <div className="mx-auto max-w-5xl p-6">Lade Training…</div>;
+    return <main className="mx-auto max-w-4xl p-4">Lade Daten…</main>;
   }
 
   return (
-    <main className="mx-auto max-w-5xl space-y-6 p-6">
-      <header className="rounded-xl border border-zinc-200 bg-zinc-50 p-4">
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+    <main className="mx-auto max-w-4xl space-y-4 p-4 pb-10">
+      <datalist id="device-options">
+        {deviceOptions.map((device) => (
+          <option key={device} value={device} />
+        ))}
+      </datalist>
+
+      <header className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h1 className="text-2xl font-semibold tracking-tight">Gym Tracker</h1>
+            <h1 className="text-xl font-semibold text-zinc-900">Gym Tracker</h1>
             <p className="text-sm text-zinc-600">
-              Geräte, Sätze, Wiederholungen und Gewicht pro Session verwalten.
+              Letzte Session laden, neue Session anlegen, Gewichte in 2.5kg anpassen.
             </p>
           </div>
           <button
             type="button"
             onClick={createNewSession}
-            disabled={submitting}
-            className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-zinc-700 disabled:cursor-not-allowed disabled:bg-zinc-400"
+            disabled={busy || dbSetupRequired || supabaseConfigMissing}
+            className="rounded-xl bg-zinc-900 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:bg-zinc-400"
           >
-            Neues Training
+            Neue Session
           </button>
         </div>
       </header>
 
-      {message ? (
-        <div className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-          {message}
-        </div>
+      {notice ? (
+        <section className="rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+          {notice}
+        </section>
       ) : null}
 
-      <section className="grid gap-4 rounded-xl border border-zinc-200 bg-white p-4 sm:grid-cols-2">
-        <label className="space-y-1">
-          <span className="text-sm font-medium">Training auswählen</span>
-          <select
-            value={selectedSessionId ?? ""}
-            onChange={(event) => setSelectedSessionId(event.target.value || null)}
-            className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm"
-          >
-            {sessions.map((session) => (
-              <option key={session.id} value={session.id}>
-                {new Date(session.date).toLocaleDateString("de-DE")}
-              </option>
-            ))}
-          </select>
-        </label>
+      {dbSetupRequired ? (
+        <section className="rounded-xl border border-red-300 bg-red-50 p-4 text-sm text-red-800">
+          <p className="font-semibold">Supabase Setup fehlt</p>
+          <p className="mt-1">
+            In deinem Supabase-Projekt fehlen die Tabellen `gt_sessions` und `gt_exercises`.
+            Fuehre im SQL Editor zuerst `schema.sql` und danach optional `seed-data.sql` aus.
+          </p>
+          <p className="mt-2 text-xs text-red-700">
+            Dateien im Repo: `/home/openclaw/gym-tracker/schema.sql` und
+            `/home/openclaw/gym-tracker/seed-data.sql`
+          </p>
+        </section>
+      ) : null}
 
-        <label className="space-y-1">
-          <span className="text-sm font-medium">Datum</span>
-          <input
-            type="date"
-            value={selectedSessionDate}
-            onChange={(event) => setSelectedSessionDate(event.target.value)}
-            onBlur={updateSessionDate}
-            className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm"
-          />
-        </label>
+      <section className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
+        <div className="grid gap-3 sm:grid-cols-2">
+          <label className="space-y-1">
+            <span className="text-sm font-medium text-zinc-700">Session</span>
+            <select
+              value={selectedSessionId ?? ""}
+              onChange={(event) => setSelectedSessionId(event.target.value || null)}
+              className="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm"
+              disabled={!sessions.length}
+            >
+              {sessions.length ? null : <option value="">Keine Session</option>}
+              {sessions.map((session) => (
+                <option key={session.id} value={session.id}>
+                  {new Date(session.date).toLocaleDateString("de-DE")}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className="space-y-1">
+            <span className="text-sm font-medium text-zinc-700">Datum</span>
+            <input
+              type="date"
+              value={selectedDate}
+              onChange={(event) => setSelectedDate(event.target.value)}
+              onBlur={saveSessionDate}
+              className="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm"
+              disabled={!selectedSessionId || dbSetupRequired || supabaseConfigMissing}
+            />
+          </label>
+        </div>
       </section>
 
       {selectedSessionId ? (
-        <>
-          {cardioExercise ? (
-            <section className="rounded-xl border border-cyan-200 bg-cyan-50 p-4">
-              <h2 className="mb-3 text-lg font-semibold">Cardio</h2>
-              <div className="grid gap-3 sm:grid-cols-3">
-                <label className="space-y-1">
-                  <span className="text-sm text-zinc-700">Minuten</span>
-                  <input
-                    type="number"
-                    min={0}
-                    value={cardioExercise.reps}
-                    onChange={(event) => {
-                      const reps = Math.max(0, Number(event.target.value) || 0);
-                      setExercises((current) =>
-                        current.map((exercise) =>
-                          exercise.id === cardioExercise.id
-                            ? { ...exercise, reps }
-                            : exercise,
-                        ),
-                      );
-                    }}
-                    onBlur={(event) => {
-                      const reps = Math.max(0, Number(event.target.value) || 0);
-                      updateExercise(cardioExercise.id, { reps }).catch((error) => {
-                        console.error("Fehler beim Speichern von Cardio-Minuten:", error);
-                        setMessage("Cardio-Minuten konnten nicht gespeichert werden.");
-                      });
-                    }}
-                    className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm"
-                  />
-                </label>
-                <label className="space-y-1">
-                  <span className="text-sm text-zinc-700">ZHF</span>
-                  <input
-                    type="number"
-                    min={0}
-                    value={cardioExercise.sets}
-                    onChange={(event) => {
-                      const sets = Math.max(0, Number(event.target.value) || 0);
-                      setExercises((current) =>
-                        current.map((exercise) =>
-                          exercise.id === cardioExercise.id
-                            ? { ...exercise, sets }
-                            : exercise,
-                        ),
-                      );
-                    }}
-                    onBlur={(event) => {
-                      const sets = Math.max(0, Number(event.target.value) || 0);
-                      updateExercise(cardioExercise.id, { sets }).catch((error) => {
-                        console.error("Fehler beim Speichern von Cardio-ZHF:", error);
-                        setMessage("Cardio-ZHF konnte nicht gespeichert werden.");
-                      });
-                    }}
-                    className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm"
-                  />
-                </label>
-                <label className="space-y-1">
-                  <span className="text-sm text-zinc-700">Notiz</span>
-                  <input
-                    type="text"
-                    value={cardioExercise.notes ?? ""}
-                    onChange={(event) => {
-                      const notes = event.target.value;
-                      setExercises((current) =>
-                        current.map((exercise) =>
-                          exercise.id === cardioExercise.id
-                            ? { ...exercise, notes }
-                            : exercise,
-                        ),
-                      );
-                    }}
-                    onBlur={(event) =>
-                      updateExercise(cardioExercise.id, {
-                        notes: event.target.value,
-                      }).catch((error) => {
-                        console.error("Fehler beim Speichern der Cardio-Notiz:", error);
-                        setMessage("Cardio-Notiz konnte nicht gespeichert werden.");
-                      })
-                    }
-                    className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm"
-                  />
-                </label>
-              </div>
-            </section>
-          ) : null}
+        <section className="space-y-3">
+          {selectedRows.length ? (
+            selectedRows.map((row) => {
+              const cardio = isCardio(row.name);
 
-          <section className="space-y-3 rounded-xl border border-zinc-200 bg-white p-4">
-            <h2 className="text-lg font-semibold">Kraftübungen</h2>
-            {sortedExercises.strength.length ? (
-              sortedExercises.strength.map((exercise) => (
+              return (
                 <article
-                  key={exercise.id}
-                  className="grid gap-3 rounded-lg border border-zinc-200 p-3 sm:grid-cols-[1fr_auto]"
+                  key={row.id}
+                  className="rounded-2xl border border-zinc-200 bg-white p-3 shadow-sm"
                 >
-                  <div className="space-y-2">
-                    <h3 className="font-medium">{exercise.name}</h3>
-                    <div className="grid grid-cols-2 gap-2 sm:max-w-xs">
-                      <label className="space-y-1">
-                        <span className="text-xs text-zinc-600">Sätze</span>
-                        <input
-                          type="number"
-                          min={0}
-                          value={exercise.sets}
-                          onChange={(event) => {
-                            const sets = Math.max(0, Number(event.target.value) || 0);
-                            setExercises((current) =>
-                              current.map((item) =>
-                                item.id === exercise.id ? { ...item, sets } : item,
-                              ),
-                            );
-                          }}
-                          onBlur={(event) => {
-                            const sets = Math.max(0, Number(event.target.value) || 0);
-                            updateExercise(exercise.id, { sets }).catch((error) => {
-                              console.error("Fehler beim Speichern der Sätze:", error);
-                              setMessage("Sätze konnten nicht gespeichert werden.");
-                            });
-                          }}
-                          className="w-full rounded-md border border-zinc-300 px-2 py-1 text-sm"
-                        />
-                      </label>
-                      <label className="space-y-1">
-                        <span className="text-xs text-zinc-600">Wdh.</span>
-                        <input
-                          type="number"
-                          min={0}
-                          value={exercise.reps}
-                          onChange={(event) => {
-                            const reps = Math.max(0, Number(event.target.value) || 0);
-                            setExercises((current) =>
-                              current.map((item) =>
-                                item.id === exercise.id ? { ...item, reps } : item,
-                              ),
-                            );
-                          }}
-                          onBlur={(event) => {
-                            const reps = Math.max(0, Number(event.target.value) || 0);
-                            updateExercise(exercise.id, { reps }).catch((error) => {
-                              console.error("Fehler beim Speichern der Wiederholungen:", error);
-                              setMessage("Wiederholungen konnten nicht gespeichert werden.");
-                            });
-                          }}
-                          className="w-full rounded-md border border-zinc-300 px-2 py-1 text-sm"
-                        />
-                      </label>
-                    </div>
-                    <label className="block space-y-1 sm:max-w-md">
-                      <span className="text-xs text-zinc-600">Notiz</span>
+                  <div className="grid grid-cols-[2.5rem_1fr] gap-2">
+                    <button
+                      type="button"
+                      onClick={() => deleteRow(row.id)}
+                      disabled={busy || dbSetupRequired || supabaseConfigMissing}
+                      className="rounded-lg border border-red-300 bg-red-50 px-2 py-2 text-sm font-semibold text-red-700 disabled:cursor-not-allowed disabled:opacity-50"
+                      aria-label={`Zeile ${row.name} loeschen`}
+                    >
+                      -
+                    </button>
+
+                    <label className="space-y-1">
+                      <span className="text-xs font-medium text-zinc-600">Geraet</span>
                       <input
-                        type="text"
-                        value={exercise.notes ?? ""}
-                        onChange={(event) => {
-                          const notes = event.target.value;
-                          setExercises((current) =>
-                            current.map((item) =>
-                              item.id === exercise.id ? { ...item, notes } : item,
-                            ),
-                          );
+                        list="device-options"
+                        value={row.name}
+                        onChange={(event) =>
+                          updateLocalRow(row.id, { name: event.target.value })
+                        }
+                        onBlur={async (event) => {
+                          const name = event.target.value.trim();
+
+                          if (!name) {
+                            if (selectedSessionId) {
+                              await loadRows(selectedSessionId);
+                            }
+                            return;
+                          }
+
+                          try {
+                            await saveRowPatch(row.id, { name });
+
+                            setDeviceOptions((current) =>
+                              Array.from(new Set([...current, name])).sort((a, b) =>
+                                a.localeCompare(b, "de"),
+                              ),
+                            );
+                          } catch (error) {
+                            withDbErrorHandling(error, "Geraet konnte nicht gespeichert werden");
+                            if (selectedSessionId) {
+                              await loadRows(selectedSessionId);
+                            }
+                          }
                         }}
-                        onBlur={(event) => {
-                          updateExercise(exercise.id, { notes: event.target.value }).catch(
-                            (error) => {
-                              console.error("Fehler beim Speichern der Notiz:", error);
-                              setMessage("Notiz konnte nicht gespeichert werden.");
-                            },
-                          );
-                        }}
-                        className="w-full rounded-md border border-zinc-300 px-2 py-1 text-sm"
+                        className="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm"
+                        disabled={dbSetupRequired || supabaseConfigMissing}
                       />
                     </label>
                   </div>
 
-                  <div className="flex items-center justify-end sm:justify-center">
-                    <div className="flex items-center overflow-hidden rounded-md border border-zinc-300">
+                  {cardio ? (
+                    <div className="mt-2 flex flex-wrap items-end gap-2">
+                      <label className="min-w-[110px] flex-1 space-y-1">
+                        <span className="text-xs font-medium text-zinc-600">Minuten</span>
+                        <input
+                          type="number"
+                          min={0}
+                          value={toInt(row.reps)}
+                          onChange={(event) =>
+                            updateLocalRow(row.id, {
+                              reps: toInt(Number(event.target.value)),
+                              sets: 0,
+                              weight: 0,
+                            })
+                          }
+                          onBlur={async (event) => {
+                            const minutes = toInt(Number(event.target.value));
+                            try {
+                              await saveRowPatch(row.id, {
+                                reps: minutes,
+                                sets: 0,
+                                weight: 0,
+                              });
+                            } catch (error) {
+                              withDbErrorHandling(
+                                error,
+                                "Cardio-Minuten konnten nicht gespeichert werden",
+                              );
+                              if (selectedSessionId) {
+                                await loadRows(selectedSessionId);
+                              }
+                            }
+                          }}
+                          className="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm"
+                          disabled={dbSetupRequired || supabaseConfigMissing}
+                        />
+                      </label>
+
                       <button
                         type="button"
-                        onClick={() => adjustWeight(exercise.id, -WEIGHT_STEP)}
-                        className="bg-zinc-100 px-3 py-2 text-lg font-semibold transition hover:bg-zinc-200"
-                        aria-label={`Gewicht für ${exercise.name} verringern`}
+                        onClick={() => changeCardioMinutes(row, -CARDIO_STEP)}
+                        className="rounded-lg border border-zinc-300 bg-zinc-100 px-3 py-2 text-sm font-semibold"
+                        disabled={dbSetupRequired || supabaseConfigMissing}
+                      >
+                        -{CARDIO_STEP}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => changeCardioMinutes(row, CARDIO_STEP)}
+                        className="rounded-lg border border-zinc-900 bg-zinc-900 px-3 py-2 text-sm font-semibold text-white"
+                        disabled={dbSetupRequired || supabaseConfigMissing}
+                      >
+                        +{CARDIO_STEP}
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="mt-2 flex flex-wrap items-end gap-2">
+                      <label className="w-[92px] space-y-1">
+                        <span className="text-xs font-medium text-zinc-600">Saetze</span>
+                        <input
+                          type="number"
+                          min={0}
+                          value={toInt(row.sets)}
+                          onChange={(event) =>
+                            updateLocalRow(row.id, { sets: toInt(Number(event.target.value)) })
+                          }
+                          onBlur={async (event) => {
+                            const sets = toInt(Number(event.target.value));
+                            try {
+                              await saveRowPatch(row.id, { sets });
+                            } catch (error) {
+                              withDbErrorHandling(error, "Saetze konnten nicht gespeichert werden");
+                              if (selectedSessionId) {
+                                await loadRows(selectedSessionId);
+                              }
+                            }
+                          }}
+                          className="w-full rounded-lg border border-zinc-300 px-2 py-2 text-sm"
+                          disabled={dbSetupRequired || supabaseConfigMissing}
+                        />
+                      </label>
+
+                      <label className="w-[110px] space-y-1">
+                        <span className="text-xs font-medium text-zinc-600">Wiederh.</span>
+                        <input
+                          type="number"
+                          min={0}
+                          value={toInt(row.reps)}
+                          onChange={(event) =>
+                            updateLocalRow(row.id, { reps: toInt(Number(event.target.value)) })
+                          }
+                          onBlur={async (event) => {
+                            const reps = toInt(Number(event.target.value));
+                            try {
+                              await saveRowPatch(row.id, { reps });
+                            } catch (error) {
+                              withDbErrorHandling(
+                                error,
+                                "Wiederholungen konnten nicht gespeichert werden",
+                              );
+                              if (selectedSessionId) {
+                                await loadRows(selectedSessionId);
+                              }
+                            }
+                          }}
+                          className="w-full rounded-lg border border-zinc-300 px-2 py-2 text-sm"
+                          disabled={dbSetupRequired || supabaseConfigMissing}
+                        />
+                      </label>
+
+                      <div className="min-w-[96px] rounded-lg border border-zinc-300 bg-zinc-50 px-3 py-2 text-center text-sm font-semibold">
+                        {formatWeight(Math.max(0, row.weight ?? 0))} kg
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => changeWeight(row, -WEIGHT_STEP)}
+                        className="rounded-lg border border-zinc-300 bg-zinc-100 px-3 py-2 text-sm font-semibold"
+                        disabled={dbSetupRequired || supabaseConfigMissing}
                       >
                         -
                       </button>
-                      <div className="min-w-20 px-3 py-2 text-center font-mono text-sm">
-                        {formatWeight(exercise.weight)} kg
-                      </div>
                       <button
                         type="button"
-                        onClick={() => adjustWeight(exercise.id, WEIGHT_STEP)}
-                        className="bg-zinc-900 px-3 py-2 text-lg font-semibold text-white transition hover:bg-zinc-700"
-                        aria-label={`Gewicht für ${exercise.name} erhöhen`}
+                        onClick={() => changeWeight(row, WEIGHT_STEP)}
+                        className="rounded-lg border border-zinc-900 bg-zinc-900 px-3 py-2 text-sm font-semibold text-white"
+                        disabled={dbSetupRequired || supabaseConfigMissing}
                       >
                         +
                       </button>
                     </div>
-                  </div>
+                  )}
                 </article>
-              ))
-            ) : (
-              <div className="rounded-lg border border-dashed border-zinc-300 px-4 py-6 text-sm text-zinc-500">
-                Keine Kraftübungen vorhanden.
-              </div>
-            )}
-          </section>
-
-          <section className="rounded-xl border border-zinc-200 bg-zinc-50 p-4">
-            <h2 className="mb-3 text-lg font-semibold">Gerät hinzufügen</h2>
-            <div className="grid gap-3 md:grid-cols-2">
-              <label className="space-y-1 md:col-span-2">
-                <span className="text-sm text-zinc-700">Name</span>
-                <input
-                  type="text"
-                  value={newExercise.name}
-                  onChange={(event) =>
-                    setNewExercise((current) => ({
-                      ...current,
-                      name: event.target.value,
-                    }))
-                  }
-                  placeholder="z. B. Shoulder Press"
-                  className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm"
-                />
-              </label>
-
-              <label className="space-y-1">
-                <span className="text-sm text-zinc-700">Sätze</span>
-                <input
-                  type="number"
-                  min={0}
-                  value={newExercise.sets}
-                  onChange={(event) =>
-                    setNewExercise((current) => ({
-                      ...current,
-                      sets: Math.max(0, Number(event.target.value) || 0),
-                    }))
-                  }
-                  className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm"
-                />
-              </label>
-
-              <label className="space-y-1">
-                <span className="text-sm text-zinc-700">Wdh.</span>
-                <input
-                  type="number"
-                  min={0}
-                  value={newExercise.reps}
-                  onChange={(event) =>
-                    setNewExercise((current) => ({
-                      ...current,
-                      reps: Math.max(0, Number(event.target.value) || 0),
-                    }))
-                  }
-                  className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm"
-                />
-              </label>
-
-              <div className="space-y-1 md:col-span-2">
-                <span className="text-sm text-zinc-700">Gewicht ({WEIGHT_STEP} kg Schritte)</span>
-                <div className="inline-flex items-center overflow-hidden rounded-md border border-zinc-300">
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setNewExercise((current) => ({
-                        ...current,
-                        weight: Math.max(0, roundToStep(current.weight - WEIGHT_STEP)),
-                      }))
-                    }
-                    className="bg-zinc-100 px-3 py-2 text-lg font-semibold transition hover:bg-zinc-200"
-                  >
-                    -
-                  </button>
-                  <div className="min-w-20 px-3 py-2 text-center font-mono text-sm">
-                    {formatWeight(newExercise.weight)} kg
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setNewExercise((current) => ({
-                        ...current,
-                        weight: roundToStep(current.weight + WEIGHT_STEP),
-                      }))
-                    }
-                    className="bg-zinc-900 px-3 py-2 text-lg font-semibold text-white transition hover:bg-zinc-700"
-                  >
-                    +
-                  </button>
-                </div>
-              </div>
-
-              <label className="space-y-1 md:col-span-2">
-                <span className="text-sm text-zinc-700">Notiz (optional)</span>
-                <input
-                  type="text"
-                  value={newExercise.notes}
-                  onChange={(event) =>
-                    setNewExercise((current) => ({
-                      ...current,
-                      notes: event.target.value,
-                    }))
-                  }
-                  className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm"
-                />
-              </label>
+              );
+            })
+          ) : (
+            <div className="rounded-xl border border-dashed border-zinc-300 bg-white p-4 text-sm text-zinc-600">
+              Keine Zeilen in dieser Session.
             </div>
-
-            <div className="mt-4">
-              <button
-                type="button"
-                onClick={addExercise}
-                disabled={submitting}
-                className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-zinc-700 disabled:cursor-not-allowed disabled:bg-zinc-400"
-              >
-                Zeile hinzufügen
-              </button>
-            </div>
-          </section>
-        </>
+          )}
+        </section>
       ) : (
-        <section className="rounded-xl border border-dashed border-zinc-300 bg-white px-6 py-10 text-center text-zinc-600">
-          Noch keine Session vorhanden. Erstelle mit dem Button oben dein erstes Training.
+        <section className="rounded-xl border border-dashed border-zinc-300 bg-white p-4 text-sm text-zinc-600">
+          Keine Session vorhanden. Erstelle zuerst eine Session mit &quot;Neue Session&quot;.
         </section>
       )}
+
+      <section className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
+        <div className="flex items-center justify-between gap-3">
+          <h2 className="text-base font-semibold">+ Zeile hinzufuegen</h2>
+        </div>
+
+        <div className="mt-3 space-y-3">
+          <label className="block space-y-1">
+            <span className="text-xs font-medium text-zinc-600">Gespeichertes Geraet</span>
+            <input
+              list="device-options"
+              value={newExistingDevice}
+              onChange={(event) => setNewExistingDevice(event.target.value)}
+              placeholder="z. B. Seated Leg Press"
+              className="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm"
+              disabled={dbSetupRequired || supabaseConfigMissing}
+            />
+          </label>
+
+          <label className="block space-y-1">
+            <span className="text-xs font-medium text-zinc-600">Oder neues Geraet</span>
+            <input
+              type="text"
+              value={newCustomDevice}
+              onChange={(event) => setNewCustomDevice(event.target.value)}
+              placeholder="Neuen Geraetenamen eingeben"
+              className="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm"
+              disabled={dbSetupRequired || supabaseConfigMissing}
+            />
+          </label>
+
+          <div className="flex flex-wrap gap-2">
+            <label className="w-[92px] space-y-1">
+              <span className="text-xs font-medium text-zinc-600">Saetze</span>
+              <input
+                type="number"
+                min={0}
+                value={newSets}
+                onChange={(event) => setNewSets(toInt(Number(event.target.value)))}
+                className="w-full rounded-lg border border-zinc-300 px-2 py-2 text-sm"
+                disabled={dbSetupRequired || supabaseConfigMissing}
+              />
+            </label>
+
+            <label className="w-[110px] space-y-1">
+              <span className="text-xs font-medium text-zinc-600">Wiederh.</span>
+              <input
+                type="number"
+                min={0}
+                value={newReps}
+                onChange={(event) => setNewReps(toInt(Number(event.target.value)))}
+                className="w-full rounded-lg border border-zinc-300 px-2 py-2 text-sm"
+                disabled={dbSetupRequired || supabaseConfigMissing}
+              />
+            </label>
+
+            <label className="w-[110px] space-y-1">
+              <span className="text-xs font-medium text-zinc-600">Cardio Min.</span>
+              <input
+                type="number"
+                min={0}
+                value={newMinutes}
+                onChange={(event) => setNewMinutes(toInt(Number(event.target.value)))}
+                className="w-full rounded-lg border border-zinc-300 px-2 py-2 text-sm"
+                disabled={dbSetupRequired || supabaseConfigMissing}
+              />
+            </label>
+
+            <div className="min-w-[96px] rounded-lg border border-zinc-300 bg-zinc-50 px-3 py-2 text-center text-sm font-semibold self-end">
+              {formatWeight(newWeight)} kg
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setNewWeight((value) => Math.max(0, roundToWeightStep(value - WEIGHT_STEP)))}
+              className="rounded-lg border border-zinc-300 bg-zinc-100 px-3 py-2 text-sm font-semibold self-end"
+              disabled={dbSetupRequired || supabaseConfigMissing}
+            >
+              -
+            </button>
+            <button
+              type="button"
+              onClick={() => setNewWeight((value) => roundToWeightStep(value + WEIGHT_STEP))}
+              className="rounded-lg border border-zinc-900 bg-zinc-900 px-3 py-2 text-sm font-semibold text-white self-end"
+              disabled={dbSetupRequired || supabaseConfigMissing}
+            >
+              +
+            </button>
+          </div>
+
+          <button
+            type="button"
+            onClick={addRow}
+            disabled={!selectedSessionId || busy || dbSetupRequired || supabaseConfigMissing}
+            className="w-full rounded-xl bg-zinc-900 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:bg-zinc-400"
+          >
+            Zeile hinzufuegen
+          </button>
+        </div>
+      </section>
     </main>
   );
 }
