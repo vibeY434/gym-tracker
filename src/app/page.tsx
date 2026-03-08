@@ -178,6 +178,12 @@ export default function GymTrackerPage() {
       return;
     }
 
+    // Equipment master list from gt_equipment (all 28 devices)
+    const { data: equipmentData } = await supabase
+      .from("gt_equipment")
+      .select("name")
+      .order("name");
+
     let query = supabase
       .from("gt_exercises")
       .select("name")
@@ -187,15 +193,22 @@ export default function GymTrackerPage() {
       query = query.ilike("name", `%${searchTerm.trim()}%`);
     }
 
-    const { data, error } = await query;
+    const { data: exercisesData, error } = await query;
 
     if (error) {
       throw error;
     }
 
-    const names = new Set(DEFAULT_DEVICE_NAMES);
+    const names = new Set<string>(DEFAULT_DEVICE_NAMES);
 
-    (data ?? []).forEach((entry) => {
+    (equipmentData ?? []).forEach((entry) => {
+      const name = String(entry.name ?? "").trim();
+      if (name) {
+        names.add(name);
+      }
+    });
+
+    (exercisesData ?? []).forEach((entry) => {
       const name = String(entry.name ?? "").trim();
       if (name) {
         names.add(name);
