@@ -1,0 +1,56 @@
+-- GymTracker Equipment Table
+-- Kanonische Migration fuer das Equipment-Feature.
+-- Muss zur App in src/app/page.tsx passen -> dort wird gt_equipment.name gelesen.
+
+CREATE TABLE IF NOT EXISTS gt_equipment (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name TEXT NOT NULL UNIQUE,
+  category TEXT NOT NULL,
+  weight_min NUMERIC(6,1) DEFAULT 0,
+  weight_max NUMERIC(6,1) DEFAULT 0,
+  weight_step NUMERIC(4,1) DEFAULT 2.5,
+  notes TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_gt_equipment_category ON gt_equipment(category);
+
+ALTER TABLE gt_equipment ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Public full access equipment" ON gt_equipment;
+CREATE POLICY "Public full access equipment"
+ON gt_equipment
+FOR ALL
+USING (TRUE)
+WITH CHECK (TRUE);
+
+INSERT INTO gt_equipment (name, category, weight_min, weight_max, weight_step, notes) VALUES
+  ('Laufband',           'Cardio', 0, 0, 0, 'Geschwindigkeit + Steigung'),
+  ('Crosstrainer',       'Cardio', 0, 0, 0, 'Widerstand + Zeit'),
+  ('Ergometer',          'Cardio', 0, 0, 0, 'Watt + Zeit'),
+  ('Rudergerät',         'Cardio', 0, 0, 0, 'Widerstand + Zeit'),
+  ('Seated Leg Press',   'Beine', 10, 200, 2.5, ''),
+  ('Leg Extension',      'Beine', 5, 120, 2.5, ''),
+  ('Seated Leg Curl',    'Beine', 5, 100, 2.5, ''),
+  ('Hip Adduction',      'Beine', 5, 120, 2.5, ''),
+  ('Hip Abduction',      'Beine', 5, 120, 2.5, ''),
+  ('Chest Press',        'Oberkörper', 5, 150, 2.5, ''),
+  ('Butterfly',          'Oberkörper', 5, 100, 2.5, 'Reverse möglich'),
+  ('Lat Pulldown',       'Oberkörper', 5, 120, 2.5, ''),
+  ('Seated Row',         'Oberkörper', 5, 120, 2.5, ''),
+  ('Shoulder Press',     'Oberkörper', 5, 100, 2.5, ''),
+  ('Kurzhantel',         'Freie Gewichte', 1, 50, 1, 'Paar, kg pro Hand'),
+  ('Langhantel',         'Freie Gewichte', 20, 200, 2.5, 'Olympia-Stange = 20kg'),
+  ('SZ-Stange',          'Freie Gewichte', 10, 80, 2.5, 'EZ-Curl'),
+  ('Kettlebell',         'Freie Gewichte', 4, 32, 4, ''),
+  ('Cable Crossover',    'Freie Gewichte', 2.5, 80, 2.5, 'Seilzug, pro Seite'),
+  ('Dip Station',        'Freie Gewichte', 0, 40, 2.5, 'Zusatzgewicht'),
+  ('Abdominal',          'Functional', 5, 100, 2.5, 'Bauchpresse'),
+  ('Back Extension',     'Functional', 5, 100, 2.5, 'Rückenstrecker'),
+  ('Rotary Torso',       'Functional', 5, 80, 2.5, 'Rotation'),
+  ('Multi-Hip',          'Functional', 5, 80, 2.5, 'Hüfttrainer'),
+  ('Hyperextension',     'Functional', 0, 25, 2.5, 'Hantelscheibenzusatz'),
+  ('TRX',                'Sonstiges', 0, 0, 0, 'Schlingentrainer'),
+  ('Faszienrolle',       'Sonstiges', 0, 0, 0, 'Regeneration'),
+  ('Stretching-Matte',   'Sonstiges', 0, 0, 0, 'Dehnübungen')
+ON CONFLICT (name) DO NOTHING;

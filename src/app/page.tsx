@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase, supabaseConfigMissing } from "../lib/supabase";
 
 type Session = {
@@ -150,6 +150,14 @@ export default function GymTrackerPage() {
   const [notice, setNotice] = useState<React.ReactNode | null>(null);
   const [dbSetupRequired, setDbSetupRequired] = useState(false);
   const [deletedExercise, setDeletedExercise] = useState<Exercise | null>(null);
+  const undoTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const clearUndoTimeout = useCallback(() => {
+    if (undoTimeoutRef.current) {
+      clearTimeout(undoTimeoutRef.current);
+      undoTimeoutRef.current = null;
+    }
+  }, []);
 
   const updateLocalRow = (exerciseId: string, patch: Partial<Exercise>) => {
     setRows((current) =>
@@ -178,7 +186,6 @@ export default function GymTrackerPage() {
       return;
     }
 
-    // Equipment master list from gt_equipment (all 28 devices)
     const { data: equipmentData } = await supabase
       .from("gt_equipment")
       .select("name")
@@ -319,6 +326,12 @@ export default function GymTrackerPage() {
     run();
   }, [loadRows, selectedSessionId, sessions]);
 
+  useEffect(() => {
+    return () => {
+      clearUndoTimeout();
+    };
+  }, [clearUndoTimeout]);
+
   const saveSessionDate = async () => {
     if (!supabase || !selectedSessionId) {
       return;
@@ -435,6 +448,13 @@ export default function GymTrackerPage() {
         const { error: insertRowsError } = await supabase.from("gt_exercises").insert(payload);
 
         if (insertRowsError) {
+          const { error: rollbackError } = await supabase
+            .from("gt_sessions")
+            .delete()
+            .eq("id", newSession.id);
+          if (rollbackError) {
+            console.error("Rollback für leere Session fehlgeschlagen", rollbackError);
+          }
           throw insertRowsError;
         }
       }
@@ -461,8 +481,7 @@ export default function GymTrackerPage() {
       setBusy(true);
       setNotice(null);
 
-      // Speichere die gelöschte Übung für Undo
-      const exerciseToDelete = rows.find(row => row.id === exerciseId);
+      const exerciseToDelete = rows.find((row) => row.id === exerciseId);
       if (exerciseToDelete) {
         setDeletedExercise(exerciseToDelete);
       }
@@ -475,7 +494,6 @@ export default function GymTrackerPage() {
 
       setRows((current) => current.filter((row) => row.id !== exerciseId));
 
-      // Zeige Undo-Nachricht an (JSX statt HTML-String)
       setNotice(
         <div className="flex items-center">
           Übung gelöscht.
@@ -488,10 +506,11 @@ export default function GymTrackerPage() {
         </div>
       );
 
-      // Automatisches Verstecken nach 5 Sekunden
-      setTimeout(() => {
+      clearUndoTimeout();
+      undoTimeoutRef.current = setTimeout(() => {
         setDeletedExercise(null);
         setNotice(null);
+        undoTimeoutRef.current = null;
       }, 5000);
     } catch (error) {
       withDbErrorHandling(error, "Zeile konnte nicht geloescht werden");
@@ -605,353 +624,337 @@ export default function GymTrackerPage() {
 
       const inserted = readExercise(data as Record<string, unknown>);
       setRows((current) => sortExercises([...current, inserted]));
-      setDeviceOptions((current) =>
-        Array.from(new Set([...current, name])).sort((a, b) => a.localeCompare(b, "de")),
-      );
-
+      setNewExistingDevice("");
       setNewCustomDevice("");
-      if (!custom) {
-        setNewExistingDevice(name);
-      }
-      if (!cardio) {
-        setNewSets(5);
-        setNewReps(10);
-        setNewWeight(0);
-      }
+      setNewSets(5);
+      setNewReps(10);
+      setNewWeight(0);
+      setNewMinutes(20);
+      await loadDeviceOptions();
     } catch (error) {
-      withDbErrorHandling(error, "Neue Zeile konnte nicht hinzugefuegt werden");
+      withDbErrorHandling(error, "Zeile konnte nicht hinzugefuegt werden");
     } finally {
       setBusy(false);
     }
   };
 
   const undoDelete = async () => {
-    if (!supabase || !deletedExercise || !selectedSessionId) {
+    if (!supabase || !selectedSessionId || !deletedExercise) {
       return;
     }
 
     try {
       setBusy(true);
       setNotice(null);
+      clearUndoTimeout();
 
-      const payload = {
-        ...deletedExercise,
-        session_id: selectedSessionId
-      };
-
-      const { error } = await supabase.from("gt_exercises").insert([payload]);
+      const { error } = await supabase
+        .from("gt_exercises")
+        .insert([{
+          session_id: selectedSessionId,
+          name: deletedExercise.name,
+          sets: deletedExercise.sets,
+          reps: deletedExercise.reps,
+          weight: deletedExercise.weight,
+          notes: deletedExercise.notes,
+        }]);
 
       if (error) {
         throw error;
       }
 
-      setRows(prev => sortExercises([...prev, deletedExercise]));
+      await loadRows(selectedSessionId);
       setDeletedExercise(null);
-      setNotice("Löschung rückgängig gemacht.");
+      setNotice("Übung wiederhergestellt.");
     } catch (error) {
-      withDbErrorHandling(error, "Undo fehlgeschlagen");
+      withDbErrorHandling(error, "Übung konnte nicht wiederhergestellt werden");
     } finally {
       setBusy(false);
     }
   };
 
-  const selectedRows = useMemo(() => sortExercises(rows), [rows]);
-
-  const isOldSession =
-    sessions.length > 0 && selectedSessionId !== null && selectedSessionId !== sessions[0].id;
-  const isLocked = dbSetupRequired || supabaseConfigMissing || isOldSession;
-
-  if (loading) {
-    return <main className="mx-auto max-w-4xl p-4">Lade Daten…</main>;
-  }
+  const sessionOptions = useMemo(() => sessions, [sessions]);
+  const selectedSession = sessionOptions.find((session) => session.id === selectedSessionId) ?? null;
+  const isLocked = !!selectedSession && selectedSession.id !== sessionOptions[0]?.id;
 
   return (
-    <main className="mx-auto max-w-4xl space-y-4 p-4 pb-10">
-      <datalist id="device-options">
-        {deviceOptions.map((device) => (
-          <option key={device} value={device} />
-        ))}
-      </datalist>
-
-      <header className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+    <main className="mx-auto flex min-h-screen max-w-5xl flex-col gap-6 px-4 py-8 text-zinc-900">
+      <section className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm">
+        <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
           <div>
-            <h1 className="text-xl font-semibold text-zinc-900">Gym Tracker</h1>
-            <p className="text-sm text-zinc-600">
-              Letzte Session laden, neue Session anlegen, Gewichte in 2.5kg anpassen.
+            <p className="text-sm font-medium uppercase tracking-wide text-zinc-500">Gym Tracker</p>
+            <h1 className="mt-1 text-3xl font-semibold">Trainingstagebuch</h1>
+            <p className="mt-2 max-w-2xl text-sm text-zinc-600">
+              Neue Sessions starten mit den Werten der letzten Session. Nur die neueste Session bleibt editierbar, ältere Sessions sind schreibgeschützt.
             </p>
           </div>
+
           <button
             type="button"
             onClick={createNewSession}
-            disabled={busy || dbSetupRequired || supabaseConfigMissing}
-            className="rounded-xl bg-zinc-900 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:bg-zinc-400"
+            disabled={busy || loading || dbSetupRequired || supabaseConfigMissing}
+            className="inline-flex items-center justify-center rounded-xl bg-zinc-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-zinc-700 disabled:cursor-not-allowed disabled:bg-zinc-400"
           >
             Neue Session
           </button>
         </div>
-      </header>
+      </section>
 
       {notice ? (
-        <section className="rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+        <section className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
           {notice}
         </section>
       ) : null}
 
       {dbSetupRequired ? (
-        <section className="rounded-xl border border-red-300 bg-red-50 p-4 text-sm text-red-800">
-          <p className="font-semibold">Supabase Setup fehlt</p>
-          <p className="mt-1">
-            In deinem Supabase-Projekt fehlen die Tabellen `gt_sessions` und `gt_exercises`.
-            Fuehre im SQL Editor zuerst `schema.sql` und danach optional `seed-data.sql` aus.
-          </p>
-          <p className="mt-2 text-xs text-red-700">
-            Dateien im Repo: `/home/openclaw/gym-tracker/schema.sql` und
-            `/home/openclaw/gym-tracker/seed-data.sql`
+        <section className="rounded-2xl border border-red-200 bg-red-50 p-5 text-sm text-red-900">
+          <h2 className="text-base font-semibold">Datenbank-Setup erforderlich</h2>
+          <p className="mt-2">
+            Die Tabellen wurden in Supabase noch nicht gefunden. Bitte <code>schema.sql</code> und optional <code>seed-data.sql</code> im SQL Editor ausführen.
           </p>
         </section>
       ) : null}
 
-      <section className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
-        <div className="grid gap-3 sm:grid-cols-2">
-          <label className="space-y-1">
-            <span className="text-sm font-medium text-zinc-700">Session</span>
+      <section className="grid gap-6 lg:grid-cols-[320px,1fr]">
+        <div className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
+          <label className="block text-sm font-medium text-zinc-700">
+            Session auswählen
             <select
               value={selectedSessionId ?? ""}
               onChange={(event) => setSelectedSessionId(event.target.value || null)}
-              className="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm"
-              disabled={!sessions.length}
+              className="mt-2 w-full rounded-xl border border-zinc-300 px-3 py-2 text-sm"
+              disabled={loading || !sessions.length}
             >
-              {sessions.length ? null : <option value="">Keine Session</option>}
-              {sessions.map((session) => (
-                <option key={session.id} value={session.id}>
-                  {new Date(session.date).toLocaleDateString("de-DE")}
-                </option>
-              ))}
+              {sessions.length ? (
+                sessions.map((session) => (
+                  <option key={session.id} value={session.id}>
+                    {session.date}
+                  </option>
+                ))
+              ) : (
+                <option value="">Keine Sessions vorhanden</option>
+              )}
             </select>
           </label>
 
-          <label className="space-y-1">
-            <span className="text-sm font-medium text-zinc-700">Datum</span>
+          <label className="mt-4 block text-sm font-medium text-zinc-700">
+            Datum
             <input
               type="date"
               value={selectedDate}
               onChange={(event) => setSelectedDate(event.target.value)}
               onBlur={saveSessionDate}
-              className="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm"
+              className="mt-2 w-full rounded-xl border border-zinc-300 px-3 py-2 text-sm"
               disabled={!selectedSessionId || isLocked}
             />
           </label>
+
+          <p className="mt-3 text-xs text-zinc-500">
+            {isLocked
+              ? "Historische Session: Eingaben sind gesperrt."
+              : "Aktuelle Session: Änderungen werden beim Verlassen des Felds gespeichert."}
+          </p>
         </div>
-      </section>
 
-      {selectedSessionId ? (
-        <section className="space-y-3">
-          {selectedRows.length ? (
-            selectedRows.map((row) => {
-              const cardio = isCardio(row.name);
+        {loading ? (
+          <section className="rounded-xl border border-dashed border-zinc-300 bg-white p-4 text-sm text-zinc-600">
+            Lade Trainingsdaten…
+          </section>
+        ) : selectedSession ? (
+          <section className="space-y-4">
+            {rows.length ? (
+              rows.map((row) => {
+                const cardio = isCardio(row.name);
 
-              return (
-                <article
-                  key={row.id}
-                  className="rounded-2xl border border-zinc-200 bg-white p-3 shadow-sm"
-                >
-                  <div className="grid grid-cols-[2.5rem_1fr] gap-2">
-                    <button
-                      type="button"
-                      onClick={() => deleteRow(row.id)}
-                      disabled={busy || isLocked}
-                      className="rounded-lg border border-red-300 bg-red-50 px-2 py-2 text-sm font-semibold text-red-700 disabled:cursor-not-allowed disabled:opacity-50"
-                      aria-label={`Zeile ${row.name} löschen`}
-                    >
-                      -
-                    </button>
-
-                    <label className="space-y-1">
-                      <span className="text-xs font-medium text-zinc-600">Gerät</span>
-                      <input
-                        list="device-options"
-                        value={row.name}
-                        onChange={(event) =>
-                          updateLocalRow(row.id, { name: event.target.value })
-                        }
-                        onBlur={async (event) => {
-                          const name = event.target.value.trim();
-
-                          if (!name) {
-                            if (selectedSessionId) {
-                              await loadRows(selectedSessionId);
-                            }
-                            return;
-                          }
-
-                          try {
-                            await saveRowPatch(row.id, { name });
-
-                            setDeviceOptions((current) =>
-                              Array.from(new Set([...current, name])).sort((a, b) =>
-                                a.localeCompare(b, "de"),
-                              ),
-                            );
-                          } catch (error) {
-                            withDbErrorHandling(error, "Gerät konnte nicht gespeichert werden");
-                            if (selectedSessionId) {
-                              await loadRows(selectedSessionId);
-                            }
-                          }
-                        }}
-                        className="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm"
-                        disabled={isLocked}
-                      />
-                    </label>
-                  </div>
-
-                  {cardio ? (
-                    <div className="mt-2 flex flex-wrap items-end gap-2">
-                      <label className="min-w-[110px] flex-1 space-y-1">
-                        <span className="text-xs font-medium text-zinc-600">Minuten</span>
-                        <input
-                          type="number"
-                          min={0}
-                          value={toInt(row.reps)}
-                          onChange={(event) =>
-                            updateLocalRow(row.id, {
-                              reps: toInt(Number(event.target.value)),
-                              sets: 0,
-                              weight: 0,
-                            })
-                          }
-                          onBlur={async (event) => {
-                            const minutes = toInt(Number(event.target.value));
-                            try {
-                              await saveRowPatch(row.id, {
-                                reps: minutes,
-                                sets: 0,
-                                weight: 0,
-                              });
-                            } catch (error) {
-                              withDbErrorHandling(
-                                error,
-                                "Cardio-Minuten konnten nicht gespeichert werden",
-                              );
-                              if (selectedSessionId) {
-                                await loadRows(selectedSessionId);
+                return (
+                  <article
+                    key={row.id}
+                    className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm"
+                  >
+                    <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
+                      <div className="min-w-0 flex-1">
+                        <label className="block text-sm font-medium text-zinc-700">
+                          Gerät
+                          <input
+                            type="text"
+                            value={row.name}
+                            onChange={(event) => updateLocalRow(row.id, { name: event.target.value })}
+                            onBlur={async (event) => {
+                              const nextName = event.target.value.trim() || row.name;
+                              updateLocalRow(row.id, { name: nextName });
+                              try {
+                                await saveRowPatch(row.id, { name: nextName });
+                                await loadDeviceOptions();
+                              } catch (error) {
+                                withDbErrorHandling(error, "Gerätename konnte nicht gespeichert werden");
+                                if (selectedSessionId) {
+                                  await loadRows(selectedSessionId);
+                                }
                               }
-                            }
-                          }}
-                          className="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm"
-                          disabled={isLocked}
-                        />
-                      </label>
-
-                      <button
-                        type="button"
-                        onClick={() => changeCardioMinutes(row, -CARDIO_STEP)}
-                        className="rounded-lg border border-zinc-300 bg-zinc-100 px-3 py-2 text-sm font-semibold"
-                        disabled={isLocked}
-                      >
-                        -{CARDIO_STEP}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => changeCardioMinutes(row, CARDIO_STEP)}
-                        className="rounded-lg border border-zinc-900 bg-zinc-900 px-3 py-2 text-sm font-semibold text-white"
-                        disabled={isLocked}
-                      >
-                        +{CARDIO_STEP}
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="mt-2 flex flex-wrap items-end gap-2">
-                      <label className="w-[92px] space-y-1">
-                        <span className="text-xs font-medium text-zinc-600">Sätze</span>
-                        <input
-                          type="number"
-                          min={0}
-                          value={toInt(row.sets)}
-                          onChange={(event) =>
-                            updateLocalRow(row.id, { sets: toInt(Number(event.target.value)) })
-                          }
-                          onBlur={async (event) => {
-                            const sets = toInt(Number(event.target.value));
-                            try {
-                              await saveRowPatch(row.id, { sets });
-                            } catch (error) {
-                              withDbErrorHandling(error, "Sätze konnten nicht gespeichert werden");
-                              if (selectedSessionId) {
-                                await loadRows(selectedSessionId);
-                              }
-                            }
-                          }}
-                          className="w-full rounded-lg border border-zinc-300 px-2 py-2 text-sm"
-                          disabled={isLocked}
-                        />
-                      </label>
-
-                      <label className="w-[110px] space-y-1">
-                        <span className="text-xs font-medium text-zinc-600">Wiederh.</span>
-                        <input
-                          type="number"
-                          min={0}
-                          value={toInt(row.reps)}
-                          onChange={(event) =>
-                            updateLocalRow(row.id, { reps: toInt(Number(event.target.value)) })
-                          }
-                          onBlur={async (event) => {
-                            const reps = toInt(Number(event.target.value));
-                            try {
-                              await saveRowPatch(row.id, { reps });
-                            } catch (error) {
-                              withDbErrorHandling(
-                                error,
-                                "Wiederholungen konnten nicht gespeichert werden",
-                              );
-                              if (selectedSessionId) {
-                                await loadRows(selectedSessionId);
-                              }
-                            }
-                          }}
-                          className="w-full rounded-lg border border-zinc-300 px-2 py-2 text-sm"
-                          disabled={isLocked}
-                        />
-                      </label>
-
-                      <div className="min-w-[96px] rounded-lg border border-zinc-300 bg-zinc-50 px-3 py-2 text-center text-sm font-semibold">
-                        {formatWeight(Math.max(0, row.weight ?? 0))} kg
+                            }}
+                            className="mt-2 w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm"
+                            disabled={isLocked}
+                          />
+                        </label>
                       </div>
 
                       <button
                         type="button"
-                        onClick={() => changeWeight(row, -WEIGHT_STEP)}
-                        className="rounded-lg border border-zinc-300 bg-zinc-100 px-3 py-2 text-sm font-semibold"
-                        disabled={isLocked}
+                        onClick={() => deleteRow(row.id)}
+                        disabled={busy || isLocked}
+                        className="rounded-lg border border-red-200 px-3 py-2 text-sm font-medium text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:text-zinc-400"
                       >
-                        -
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => changeWeight(row, WEIGHT_STEP)}
-                        className="rounded-lg border border-zinc-900 bg-zinc-900 px-3 py-2 text-sm font-semibold text-white"
-                        disabled={isLocked}
-                      >
-                        +
+                        Löschen
                       </button>
                     </div>
-                  )}
-                </article>
-              );
-            })
-          ) : (
-            <div className="rounded-xl border border-dashed border-zinc-300 bg-white p-4 text-sm text-zinc-600">
-              Keine Zeilen in dieser Session.
-            </div>
-          )}
-        </section>
-      ) : (
-        <section className="rounded-xl border border-dashed border-zinc-300 bg-white p-4 text-sm text-zinc-600">
-          Keine Session vorhanden. Erstelle zuerst eine Session mit &quot;Neue Session&quot;.
-        </section>
-      )}
+
+                    {cardio ? (
+                      <div className="mt-4 flex flex-wrap items-end gap-2">
+                        <label className="w-[140px] space-y-1">
+                          <span className="text-xs font-medium text-zinc-600">Minuten</span>
+                          <input
+                            type="number"
+                            min={0}
+                            value={toInt(row.reps)}
+                            onChange={(event) =>
+                              updateLocalRow(row.id, {
+                                reps: toInt(Number(event.target.value)),
+                                sets: 0,
+                                weight: 0,
+                              })
+                            }
+                            onBlur={async (event) => {
+                              const minutes = toInt(Number(event.target.value));
+                              try {
+                                await saveRowPatch(row.id, {
+                                  reps: minutes,
+                                  sets: 0,
+                                  weight: 0,
+                                });
+                              } catch (error) {
+                                withDbErrorHandling(
+                                  error,
+                                  "Cardio-Minuten konnten nicht gespeichert werden",
+                                );
+                                if (selectedSessionId) {
+                                  await loadRows(selectedSessionId);
+                                }
+                              }
+                            }}
+                            className="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm"
+                            disabled={isLocked}
+                          />
+                        </label>
+
+                        <button
+                          type="button"
+                          onClick={() => changeCardioMinutes(row, -CARDIO_STEP)}
+                          className="rounded-lg border border-zinc-300 bg-zinc-100 px-3 py-2 text-sm font-semibold"
+                          disabled={isLocked}
+                        >
+                          -{CARDIO_STEP}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => changeCardioMinutes(row, CARDIO_STEP)}
+                          className="rounded-lg border border-zinc-900 bg-zinc-900 px-3 py-2 text-sm font-semibold text-white"
+                          disabled={isLocked}
+                        >
+                          +{CARDIO_STEP}
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="mt-2 flex flex-wrap items-end gap-2">
+                        <label className="w-[92px] space-y-1">
+                          <span className="text-xs font-medium text-zinc-600">Sätze</span>
+                          <input
+                            type="number"
+                            min={0}
+                            value={toInt(row.sets)}
+                            onChange={(event) =>
+                              updateLocalRow(row.id, { sets: toInt(Number(event.target.value)) })
+                            }
+                            onBlur={async (event) => {
+                              const sets = toInt(Number(event.target.value));
+                              try {
+                                await saveRowPatch(row.id, { sets });
+                              } catch (error) {
+                                withDbErrorHandling(error, "Sätze konnten nicht gespeichert werden");
+                                if (selectedSessionId) {
+                                  await loadRows(selectedSessionId);
+                                }
+                              }
+                            }}
+                            className="w-full rounded-lg border border-zinc-300 px-2 py-2 text-sm"
+                            disabled={isLocked}
+                          />
+                        </label>
+
+                        <label className="w-[110px] space-y-1">
+                          <span className="text-xs font-medium text-zinc-600">Wiederh.</span>
+                          <input
+                            type="number"
+                            min={0}
+                            value={toInt(row.reps)}
+                            onChange={(event) =>
+                              updateLocalRow(row.id, { reps: toInt(Number(event.target.value)) })
+                            }
+                            onBlur={async (event) => {
+                              const reps = toInt(Number(event.target.value));
+                              try {
+                                await saveRowPatch(row.id, { reps });
+                              } catch (error) {
+                                withDbErrorHandling(
+                                  error,
+                                  "Wiederholungen konnten nicht gespeichert werden",
+                                );
+                                if (selectedSessionId) {
+                                  await loadRows(selectedSessionId);
+                                }
+                              }
+                            }}
+                            className="w-full rounded-lg border border-zinc-300 px-2 py-2 text-sm"
+                            disabled={isLocked}
+                          />
+                        </label>
+
+                        <div className="min-w-[96px] rounded-lg border border-zinc-300 bg-zinc-50 px-3 py-2 text-center text-sm font-semibold">
+                          {formatWeight(Math.max(0, row.weight ?? 0))} kg
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => changeWeight(row, -WEIGHT_STEP)}
+                          className="rounded-lg border border-zinc-300 bg-zinc-100 px-3 py-2 text-sm font-semibold"
+                          disabled={isLocked}
+                        >
+                          -
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => changeWeight(row, WEIGHT_STEP)}
+                          className="rounded-lg border border-zinc-900 bg-zinc-900 px-3 py-2 text-sm font-semibold text-white"
+                          disabled={isLocked}
+                        >
+                          +
+                        </button>
+                      </div>
+                    )}
+                  </article>
+                );
+              })
+            ) : (
+              <div className="rounded-xl border border-dashed border-zinc-300 bg-white p-4 text-sm text-zinc-600">
+                Keine Zeilen in dieser Session.
+              </div>
+            )}
+          </section>
+        ) : (
+          <section className="rounded-xl border border-dashed border-zinc-300 bg-white p-4 text-sm text-zinc-600">
+            Keine Session vorhanden. Erstelle zuerst eine Session mit &quot;Neue Session&quot;.
+          </section>
+        )}
+      </section>
 
       <section className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
         <div className="flex items-center justify-between gap-3">
@@ -1052,8 +1055,12 @@ export default function GymTrackerPage() {
           </button>
         </div>
       </section>
+
+      <datalist id="device-options">
+        {deviceOptions.map((name) => (
+          <option key={name} value={name} />
+        ))}
+      </datalist>
     </main>
   );
 }
-
-
