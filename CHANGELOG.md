@@ -1,5 +1,14 @@
 # CHANGELOG.md — Gym-Tracker App
 
+## v1.1.0 — 2026-04-13 (In Progress)
+
+### Architektur & Sicherheit
+- **Öffentliche und private Variante getrennt:** Root ist jetzt ein Einstieg mit klarer Trennung zwischen öffentlicher One-Shot-Vorlage (`/one-shot`) und privater Supabase-Version (`/private`).
+- **Öffentliche One-Shot-Vorlage:** Neue browserlokale Version ohne Supabase-Rückschreiben mit Copy-Paste-Export für einmalige Trainingslogs.
+- **Privater Magic-Link-Flow vorbereitet:** Die private Version ist auf Supabase-Login via Mail-Link vorbereitet; Route-Handler liegt unter `src/app/api/auth/magic-link/route.ts`.
+- **RLS-Defaults gehärtet:** `schema.sql`, `equipment.sql` und `migrations/001_equipment.sql` stellen neue Setups nicht mehr offen auf `public full access`.
+- **Nachzieh-Migration:** `migrations/002_authenticated_access.sql` zieht bestehende offene Installationen auf `authenticated` um.
+
 ## v1.0.2 — 2026-03-04 (In Progress)
 
 ### Bugfixes & Polishing

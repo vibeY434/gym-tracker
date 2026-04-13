@@ -47,15 +47,19 @@ ALTER TABLE gt_sessions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE gt_exercises ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS "Public full access sessions" ON gt_sessions;
-CREATE POLICY "Public full access sessions"
+DROP POLICY IF EXISTS "Authenticated full access sessions" ON gt_sessions;
+CREATE POLICY "Authenticated full access sessions"
 ON gt_sessions
 FOR ALL
+TO authenticated
 USING (TRUE)
 WITH CHECK (TRUE);
 
 DROP POLICY IF EXISTS "Public full access exercises" ON gt_exercises;
-CREATE POLICY "Public full access exercises"
+DROP POLICY IF EXISTS "Authenticated full access exercises" ON gt_exercises;
+CREATE POLICY "Authenticated full access exercises"
 ON gt_exercises
 FOR ALL
+TO authenticated
 USING (TRUE)
 WITH CHECK (TRUE);

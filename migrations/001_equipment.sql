@@ -18,11 +18,11 @@ CREATE INDEX IF NOT EXISTS idx_gt_equipment_category ON gt_equipment(category);
 ALTER TABLE gt_equipment ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS "Public full access equipment" ON gt_equipment;
-CREATE POLICY "Public full access equipment"
+DROP POLICY IF EXISTS "Public read equipment" ON gt_equipment;
+CREATE POLICY "Public read equipment"
 ON gt_equipment
-FOR ALL
-USING (TRUE)
-WITH CHECK (TRUE);
+FOR SELECT
+USING (TRUE);
 
 INSERT INTO gt_equipment (name, category, weight_min, weight_max, weight_step, notes) VALUES
   ('Laufband',           'Cardio', 0, 0, 0, 'Geschwindigkeit + Steigung'),
