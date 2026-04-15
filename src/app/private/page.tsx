@@ -6,6 +6,17 @@ export const metadata: Metadata = {
   description: "Private Trainingsdatenbank mit Supabase, Session-Historie und Login-Vorbereitung.",
 };
 
-export default function PrivatePage() {
-  return <GymTrackerPrivate />;
+interface PrivatePageProps {
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
+}
+
+function getFirstSearchParam(value: string | string[] | undefined) {
+  return Array.isArray(value) ? value[0] : value;
+}
+
+export default async function PrivatePage({ searchParams }: PrivatePageProps) {
+  const resolvedSearchParams = (await searchParams) ?? {};
+  const loginError = getFirstSearchParam(resolvedSearchParams.error);
+
+  return <GymTrackerPrivate loginError={loginError} />;
 }

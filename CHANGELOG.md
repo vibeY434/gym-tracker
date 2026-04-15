@@ -6,8 +6,21 @@
 - **Öffentliche und private Variante getrennt:** Root ist jetzt ein Einstieg mit klarer Trennung zwischen öffentlicher One-Shot-Vorlage (`/one-shot`) und privater Supabase-Version (`/private`).
 - **Öffentliche One-Shot-Vorlage:** Neue browserlokale Version ohne Supabase-Rückschreiben mit Copy-Paste-Export für einmalige Trainingslogs.
 - **Privater Magic-Link-Flow vorbereitet:** Die private Version ist auf Supabase-Login via Mail-Link vorbereitet; Route-Handler liegt unter `src/app/api/auth/magic-link/route.ts`.
+- **Private-Gate-Handoff vorbereitet:** `src/lib/handoff.ts` und `src/app/auth/handoff/route.ts` koennen jetzt signierte Sessions von `private.w3yh.xyz` pruefen und lokal auf `gym.w3yh.xyz` in eine App-Session uebernehmen.
+- **Magic-Link-Route gehärtet:** Redirect-Origin wird validiert, kaputte JSON-Bodies werden sauber abgefangen und Magic-Link-Anfragen werden serverseitig rate-limitiert.
 - **RLS-Defaults gehärtet:** `schema.sql`, `equipment.sql` und `migrations/001_equipment.sql` stellen neue Setups nicht mehr offen auf `public full access`.
 - **Nachzieh-Migration:** `migrations/002_authenticated_access.sql` zieht bestehende offene Installationen auf `authenticated` um.
+- **PC-Setup dokumentiert:** `SUPABASE_SETUP.md` bündelt die exakte Reihenfolge für SQL, Auth-Settings, Redirect-URLs, Vercel-Env und den abschließenden Login-Test.
+
+### Go-Live & Verifikation
+- **Produktions-Env für den privaten Login gesetzt:** `NEXT_PUBLIC_GYM_TRACKER_ORIGIN`, `NEXT_PUBLIC_GYM_TRACKER_REQUIRE_AUTH=true` und `GYM_ALLOWED_EMAILS` sind im Vercel-Projekt jetzt produktiv hinterlegt.
+- **Production-Deploy erneuert:** `gym.w3yh.xyz` läuft auf einem frischen Deploy mit aktivem privaten Auth-Pfad.
+- **Magic-Link-API live getestet:** `/api/auth/magic-link` antwortet neutral sowohl für freigeschaltete als auch für gesperrte Adressen und leakt damit keine Allowlist.
+- **Rate-Limit-Fehler nicht mehr verschleiert:** Wenn Supabase den Mailversand drosselt oder der gemeinsame Email-Provider deaktiviert ist, kommt jetzt eine passende Fehlermeldung statt eines diffusen generischen 500ers.
+- **Read-only-Probe ergänzt:** `SUPABASE_SETUP.md` enthält jetzt einen API-Check ohne Dashboard, damit man offene RLS-/Auth-Defaults sofort sieht.
+- **Private UI auf Gate-Einstieg gezogen:** Die Login-Maske unter `/private` verweist jetzt sichtbar auf das zentrale Gate; solange `private.w3yh.xyz` noch nicht als Alias haengt, ist `https://w3yh.xyz/private/go/gym` der reale Live-Pfad. `README.md` und `SUPABASE_SETUP.md` dokumentieren zusaetzlich das benoetigte Secret `W3YH_PRIVATE_HANDOFF_SECRET`.
+- **Env-Vorlage ergänzt:** `.env.example` liegt jetzt direkt im Repo, damit der produktive Gate-/Supabase-Block nicht mehr nur aus verstreuten Doku-Schnipseln zusammengesetzt werden muss.
+- **Verbleibender Rest klar benannt:** Die Read-only-Probe zeigt aktuell noch anon `200` auf `gt_sessions` und `gt_exercises`; dazu stehen `site_url` und Signup-Defaults im Supabase-Auth-Setup noch nicht auf dem Zielzustand. Der Rest von `GYM-1` ist damit ein reiner Dashboard-/SQL-Schritt.
 
 ## v1.0.2 — 2026-03-04 (In Progress)
 

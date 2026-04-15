@@ -44,7 +44,11 @@ const errorMessage = (error: unknown) => {
 
 const isMissingTableError = (error: unknown) => errorCode(error) === "PGRST205";
 
-export function GymTrackerPrivate() {
+interface GymTrackerPrivateProps {
+  loginError?: string;
+}
+
+export function GymTrackerPrivate({ loginError }: GymTrackerPrivateProps) {
   const [sessions, setSessions] = useState<TrainingSession[]>([]);
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const [selectedDate, setSelectedDate] = useState(toIsoDate());
@@ -67,7 +71,7 @@ export function GymTrackerPrivate() {
   const [authLoading, setAuthLoading] = useState(gymTrackerAuthRequired);
   const [loginEmail, setLoginEmail] = useState("");
   const [loginBusy, setLoginBusy] = useState(false);
-  const [loginNotice, setLoginNotice] = useState<string | null>(null);
+  const [loginNotice, setLoginNotice] = useState<string | null>(loginError ?? null);
   const undoTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const clearUndoTimeout = useCallback(() => {
@@ -699,15 +703,23 @@ export function GymTrackerPrivate() {
               <p className="text-sm font-medium uppercase tracking-wide text-zinc-500">Gym Tracker</p>
               <h1 className="mt-1 text-3xl font-semibold">Privater Bereich</h1>
               <p className="mt-2 max-w-xl text-sm text-zinc-600">
-                Hier hängt später die Supabase-Version mit Schreibzugriff. Öffentliche One-Shot-Nutzung läuft getrennt ohne Datenbank.
+                Bevorzugter Einstieg ist jetzt w3yh.xyz/private. Diese direkte Login-Maske bleibt nur als Fallback fuer Debug und Uebergang, bis die eigene Alias-Domain live ist.
               </p>
             </div>
-            <Link
-              href="/one-shot"
-              className="inline-flex items-center justify-center rounded-xl border border-zinc-300 px-4 py-2 text-sm font-semibold text-zinc-700 transition hover:border-zinc-900 hover:text-zinc-900"
-            >
-              Öffentliche Vorlage
-            </Link>
+            <div className="flex flex-wrap gap-3">
+              <Link
+                href="https://w3yh.xyz/private/go/gym"
+                className="inline-flex items-center justify-center rounded-xl bg-zinc-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-zinc-700"
+              >
+                Ueber Private Gate oeffnen
+              </Link>
+              <Link
+                href="/one-shot"
+                className="inline-flex items-center justify-center rounded-xl border border-zinc-300 px-4 py-2 text-sm font-semibold text-zinc-700 transition hover:border-zinc-900 hover:text-zinc-900"
+              >
+                Oeffentliche Vorlage
+              </Link>
+            </div>
           </div>
 
           <form onSubmit={requestMagicLink} className="mt-6 space-y-4">
@@ -750,10 +762,19 @@ export function GymTrackerPrivate() {
               <li>in Supabase die offenen Policies mit <code>migrations/002_authenticated_access.sql</code> ersetzen</li>
               <li>nur erlaubte Nutzer einladen oder öffentliche Signups abschalten</li>
               <li><code>GYM_ALLOWED_EMAILS</code> und <code>NEXT_PUBLIC_GYM_TRACKER_REQUIRE_AUTH=true</code> setzen</li>
+              <li>
+                in Supabase Auth die Redirect URL auf{" "}
+                <code>{privateAppOrigin ? `${privateAppOrigin}/private` : "/private"}</code> setzen
+              </li>
             </ul>
             {privateAppOrigin ? (
               <p className="mt-2 text-xs text-zinc-500">Redirect-Origin aktuell: {privateAppOrigin}</p>
             ) : null}
+            <p className="mt-2 text-xs text-zinc-500">
+              Fuer den Gate-Handoff braucht die App zusaetzlich{" "}
+              <code>W3YH_PRIVATE_HANDOFF_SECRET</code> mit demselben Wert wie im
+              zentralen Gate unter <code>w3yh.xyz/private</code>.
+            </p>
           </div>
         </section>
       </main>
