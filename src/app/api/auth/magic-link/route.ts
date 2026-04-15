@@ -157,7 +157,7 @@ export async function POST(request: NextRequest) {
   const { error } = await supabase.auth.signInWithOtp({
     email,
     options: {
-      emailRedirectTo: `${origin}/private`,
+      emailRedirectTo: `${origin}/auth/callback?next=%2Fprivate`,
       shouldCreateUser: false,
     },
   });

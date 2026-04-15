@@ -3,6 +3,9 @@
 ## v1.1.0 — 2026-04-13 (In Progress)
 
 ### Architektur & Sicherheit
+- **Cookie-basierte Browser-Session vereinheitlicht:** `src/lib/supabase.ts` nutzt jetzt `@supabase/ssr` statt des alten Plain-Clients. Damit lesen privater Browser-Login, Magic-Link-Rückkehr und Gate-Handoff dieselbe Session-Art statt aneinander vorbeizulaufen.
+- **Auth-Callback ergänzt:** `src/app/auth/callback/route.ts` tauscht Mail-Link- oder Recovery-Token jetzt serverseitig in eine echte App-Session für `gym.w3yh.xyz`. Die Magic-Link-API zeigt dafür nicht mehr stumpf auf `/private`, sondern auf den Callback.
+- **Fallback-Login auf Passwort erweitert:** `/private` akzeptiert jetzt zusätzlich E-Mail plus Passwort; Magic Link bleibt nur noch der Fallback. Die Copy erklärt jetzt auch hier klar, dass das Private Gate der erste Weg und der Passwortmanager danach der bequemste Alltagspfad ist.
 - **Öffentliche und private Variante getrennt:** Root ist jetzt ein Einstieg mit klarer Trennung zwischen öffentlicher One-Shot-Vorlage (`/one-shot`) und privater Supabase-Version (`/private`).
 - **Öffentliche One-Shot-Vorlage:** Neue browserlokale Version ohne Supabase-Rückschreiben mit Copy-Paste-Export für einmalige Trainingslogs.
 - **Privater Magic-Link-Flow vorbereitet:** Die private Version ist auf Supabase-Login via Mail-Link vorbereitet; Route-Handler liegt unter `src/app/api/auth/magic-link/route.ts`.
@@ -20,7 +23,11 @@
 - **Read-only-Probe ergänzt:** `SUPABASE_SETUP.md` enthält jetzt einen API-Check ohne Dashboard, damit man offene RLS-/Auth-Defaults sofort sieht.
 - **Private UI auf Gate-Einstieg gezogen:** Die Login-Maske unter `/private` verweist jetzt sichtbar auf das zentrale Gate; solange `private.w3yh.xyz` noch nicht als Alias haengt, ist `https://w3yh.xyz/private/go/gym` der reale Live-Pfad. `README.md` und `SUPABASE_SETUP.md` dokumentieren zusaetzlich das benoetigte Secret `W3YH_PRIVATE_HANDOFF_SECRET`.
 - **Env-Vorlage ergänzt:** `.env.example` liegt jetzt direkt im Repo, damit der produktive Gate-/Supabase-Block nicht mehr nur aus verstreuten Doku-Schnipseln zusammengesetzt werden muss.
+- **Gate-Rollout live bestätigt:** Der GitHub-Deploy `76aa59c` ist auf Vercel `READY`; `https://gym.w3yh.xyz/private` antwortet damit jetzt produktiv auf dem neuen privaten Einstieg.
+- **Handoff-Runtime live eingegrenzt:** `https://gym.w3yh.xyz/auth/handoff?handoff=test` redirectet kontrolliert auf `/private?error=Private-Gate-Handoff+ist+noch+nicht+konfiguriert.` Damit ist klar, dass der neue Handoff-Pfad live ist und jetzt nur noch `W3YH_PRIVATE_HANDOFF_SECRET` im Runtime-Setup fehlt.
+- **Shared-Secret live angekommen:** Der Handoff-Test auf `https://gym.w3yh.xyz/auth/handoff?handoff=test` faellt jetzt mit `Handoff-Token ist unvollstaendig.` statt mit einem Konfigurationsfehler. Damit ist die Runtime-Verkabelung geschlossen; offen bleibt nur noch der echte Gate-Login mit realer Session.
 - **Verbleibender Rest klar benannt:** Die Read-only-Probe zeigt aktuell noch anon `200` auf `gt_sessions` und `gt_exercises`; dazu stehen `site_url` und Signup-Defaults im Supabase-Auth-Setup noch nicht auf dem Zielzustand. Der Rest von `GYM-1` ist damit ein reiner Dashboard-/SQL-Schritt.
+- **Lokaler Build nach Auth-Umbau grün:** `npm run build` läuft nach Passwort-Login, SSR-Browser-Client und neuem `/auth/callback` wieder sauber durch; der nächste Rest ist nur noch Deploy plus echter Gate-Smoke.
 
 ## v1.0.2 — 2026-03-04 (In Progress)
 

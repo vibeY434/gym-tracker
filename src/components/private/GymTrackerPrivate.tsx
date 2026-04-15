@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
-import type { Session as AuthSession } from "@supabase/supabase-js";
+import type { AuthChangeEvent, Session as AuthSession } from "@supabase/supabase-js";
 import {
   CARDIO_STEP,
   DEFAULT_DEVICE_NAMES,
@@ -70,6 +70,7 @@ export function GymTrackerPrivate({ loginError }: GymTrackerPrivateProps) {
   const [authSession, setAuthSession] = useState<AuthSession | null>(null);
   const [authLoading, setAuthLoading] = useState(gymTrackerAuthRequired);
   const [loginEmail, setLoginEmail] = useState("");
+  const [loginPassword, setLoginPassword] = useState("");
   const [loginBusy, setLoginBusy] = useState(false);
   const [loginNotice, setLoginNotice] = useState<string | null>(loginError ?? null);
   const undoTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -125,14 +126,14 @@ export function GymTrackerPrivate({ loginError }: GymTrackerPrivateProps) {
 
     const names = new Set<string>(DEFAULT_DEVICE_NAMES);
 
-    (equipmentData ?? []).forEach((entry) => {
+    (equipmentData ?? []).forEach((entry: { name?: unknown }) => {
       const name = String(entry.name ?? "").trim();
       if (name) {
         names.add(name);
       }
     });
 
-    (exercisesData ?? []).forEach((entry) => {
+    (exercisesData ?? []).forEach((entry: { name?: unknown }) => {
       const name = String(entry.name ?? "").trim();
       if (name) {
         names.add(name);
@@ -156,7 +157,7 @@ export function GymTrackerPrivate({ loginError }: GymTrackerPrivateProps) {
       throw error;
     }
 
-    const nextSessions = (data ?? []).map((session) => ({
+    const nextSessions: TrainingSession[] = (data ?? []).map((session: { id?: unknown; date?: unknown }) => ({
       id: String(session.id),
       date: String(session.date),
     }));
@@ -192,7 +193,9 @@ export function GymTrackerPrivate({ loginError }: GymTrackerPrivateProps) {
       throw error;
     }
 
-    const parsedRows = (data ?? []).map((row) => readExercise(row as Record<string, unknown>));
+    const parsedRows = (data ?? []).map((row: Record<string, unknown>) =>
+      readExercise(row),
+    );
     setRows(sortRows(parsedRows));
   }, []);
 
@@ -224,10 +227,12 @@ export function GymTrackerPrivate({ loginError }: GymTrackerPrivateProps) {
 
     const {
       data: { subscription },
-    } = supabaseClient.auth.onAuthStateChange((_event, session) => {
+    } = supabaseClient.auth.onAuthStateChange(
+      (_event: AuthChangeEvent, session: AuthSession | null) => {
       setAuthSession(session);
       setAuthLoading(false);
-    });
+      },
+    );
 
     return () => {
       active = false;
@@ -287,9 +292,7 @@ export function GymTrackerPrivate({ loginError }: GymTrackerPrivateProps) {
     };
   }, [clearUndoTimeout]);
 
-  const requestMagicLink = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-
+  const requestMagicLink = async () => {
     const email = loginEmail.trim().toLowerCase();
     if (!email) {
       setLoginNotice("Trag eine Mailadresse ein.");
@@ -316,6 +319,50 @@ export function GymTrackerPrivate({ loginError }: GymTrackerPrivateProps) {
         payload.message ||
           "Wenn die Adresse freigeschaltet ist, ist der Magic Link unterwegs.",
       );
+    } catch (error) {
+      setLoginNotice(errorMessage(error));
+    } finally {
+      setLoginBusy(false);
+    }
+  };
+
+  const signInWithPassword = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    const email = loginEmail.trim().toLowerCase();
+    if (!email || !loginPassword) {
+      setLoginNotice("Bitte E-Mail und Passwort eintragen.");
+      return;
+    }
+
+    if (!supabase) {
+      setLoginNotice("Supabase ist nicht konfiguriert.");
+      return;
+    }
+
+    try {
+      setLoginBusy(true);
+      setLoginNotice(null);
+
+      const { error } = await supabase.auth.signInWithPassword({
+        email,
+        password: loginPassword,
+      });
+
+      if (error) {
+        if (error.message === "Invalid login credentials") {
+          setLoginNotice(
+            "Passwort stimmt nicht oder es ist noch keins gesetzt. Geh einmal über das Private Gate rein und speichere dort dein Passwort.",
+          );
+          return;
+        }
+
+        setLoginNotice(error.message);
+        return;
+      }
+
+      setLoginPassword("");
+      setLoginNotice("Login erfolgreich. Die Session wird gerade geladen.");
     } catch (error) {
       setLoginNotice(errorMessage(error));
     } finally {
@@ -400,7 +447,9 @@ export function GymTrackerPrivate({ loginError }: GymTrackerPrivateProps) {
           throw sourceError;
         }
 
-        cloneRows = (sourceRows ?? []).map((row) => row as Record<string, unknown>);
+        cloneRows = (sourceRows ?? []).map(
+          (row: Record<string, unknown>) => row,
+        );
       }
 
       const sourceForInsert: ExerciseTemplate[] = cloneRows.length
@@ -703,7 +752,7 @@ export function GymTrackerPrivate({ loginError }: GymTrackerPrivateProps) {
               <p className="text-sm font-medium uppercase tracking-wide text-zinc-500">Gym Tracker</p>
               <h1 className="mt-1 text-3xl font-semibold">Privater Bereich</h1>
               <p className="mt-2 max-w-xl text-sm text-zinc-600">
-                Bevorzugter Einstieg ist jetzt w3yh.xyz/private. Diese direkte Login-Maske bleibt nur als Fallback fuer Debug und Uebergang, bis die eigene Alias-Domain live ist.
+                Bevorzugter Einstieg ist jetzt w3yh.xyz/private. Wenn du oft Geräte wechselst, nutz hier E-Mail und Passwort; Magic Link bleibt nur der Fallback.
               </p>
             </div>
             <div className="flex flex-wrap gap-3">
@@ -711,18 +760,18 @@ export function GymTrackerPrivate({ loginError }: GymTrackerPrivateProps) {
                 href="https://w3yh.xyz/private/go/gym"
                 className="inline-flex items-center justify-center rounded-xl bg-zinc-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-zinc-700"
               >
-                Ueber Private Gate oeffnen
+                Über Private Gate öffnen
               </Link>
               <Link
                 href="/one-shot"
                 className="inline-flex items-center justify-center rounded-xl border border-zinc-300 px-4 py-2 text-sm font-semibold text-zinc-700 transition hover:border-zinc-900 hover:text-zinc-900"
               >
-                Oeffentliche Vorlage
+                Öffentliche Vorlage
               </Link>
             </div>
           </div>
 
-          <form onSubmit={requestMagicLink} className="mt-6 space-y-4">
+          <form onSubmit={signInWithPassword} className="mt-6 space-y-4">
             <label className="block text-sm font-medium text-zinc-700">
               Mailadresse
               <input
@@ -735,14 +784,40 @@ export function GymTrackerPrivate({ loginError }: GymTrackerPrivateProps) {
               />
             </label>
 
-            <button
-              type="submit"
-              disabled={loginBusy || supabaseConfigMissing}
-              className="inline-flex items-center justify-center rounded-xl bg-zinc-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-zinc-700 disabled:cursor-not-allowed disabled:bg-zinc-400"
-            >
-              {loginBusy ? "Link wird gesendet..." : "Magic Link senden"}
-            </button>
+            <label className="block text-sm font-medium text-zinc-700">
+              Passwort
+              <input
+                type="password"
+                value={loginPassword}
+                onChange={(event) => setLoginPassword(event.target.value)}
+                placeholder="Dein gespeichertes Passwort"
+                className="mt-2 w-full rounded-xl border border-zinc-300 px-3 py-2 text-sm"
+                autoComplete="current-password"
+              />
+            </label>
+
+            <div className="flex flex-wrap gap-3">
+              <button
+                type="submit"
+                disabled={loginBusy || supabaseConfigMissing || !loginEmail || !loginPassword}
+                className="inline-flex items-center justify-center rounded-xl bg-zinc-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-zinc-700 disabled:cursor-not-allowed disabled:bg-zinc-400"
+              >
+                {loginBusy ? "Prüfe..." : "Mit Passwort anmelden"}
+              </button>
+              <button
+                type="button"
+                onClick={() => void requestMagicLink()}
+                disabled={loginBusy || supabaseConfigMissing || !loginEmail}
+                className="inline-flex items-center justify-center rounded-xl border border-zinc-300 px-4 py-2 text-sm font-semibold text-zinc-700 transition hover:border-zinc-900 hover:text-zinc-900 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {loginBusy ? "Sende..." : "Magic Link senden"}
+              </button>
+            </div>
           </form>
+
+          <p className="mt-4 text-sm text-zinc-600">
+            Noch kein Passwort gesetzt? Einmalig per Magic Link oder über das Private Gate rein, dann dort ein Passwort speichern.
+          </p>
 
           {loginNotice ? (
             <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
@@ -764,7 +839,7 @@ export function GymTrackerPrivate({ loginError }: GymTrackerPrivateProps) {
               <li><code>GYM_ALLOWED_EMAILS</code> und <code>NEXT_PUBLIC_GYM_TRACKER_REQUIRE_AUTH=true</code> setzen</li>
               <li>
                 in Supabase Auth die Redirect URL auf{" "}
-                <code>{privateAppOrigin ? `${privateAppOrigin}/private` : "/private"}</code> setzen
+                <code>{privateAppOrigin ? `${privateAppOrigin}/auth/callback?next=%2Fprivate` : "/auth/callback?next=%2Fprivate"}</code> setzen
               </li>
             </ul>
             {privateAppOrigin ? (

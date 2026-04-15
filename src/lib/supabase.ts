@@ -1,4 +1,4 @@
-import { createClient } from "@supabase/supabase-js";
+import { createBrowserClient } from "@supabase/ssr";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
@@ -16,12 +16,14 @@ if (supabaseConfigMissing && typeof window !== "undefined") {
   );
 }
 
-export const supabase = supabaseConfigMissing
-  ? null
-  : createClient(supabaseUrl!, supabaseAnonKey!, {
-    auth: {
-      persistSession: true,
-      autoRefreshToken: true,
-      detectSessionInUrl: true,
-    },
-  });
+let browserClient: ReturnType<typeof createBrowserClient> | null = null;
+
+function createGymBrowserClient() {
+  if (!browserClient && !supabaseConfigMissing) {
+    browserClient = createBrowserClient(supabaseUrl!, supabaseAnonKey!);
+  }
+
+  return browserClient;
+}
+
+export const supabase = typeof window === "undefined" ? null : createGymBrowserClient();
