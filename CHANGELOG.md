@@ -6,6 +6,7 @@
 - **Einmal-Code-Handoff produktionsreif:** Neue Route `POST /auth/gate` akzeptiert den opaken Code ausschließlich von `https://private.w3yh.xyz`, löst ihn mit eigenem Gym-Audience-Secret serverseitig ein und mintet per `generateLink` plus `verifyOtp` eine lokale Session. Der Code steht nicht in URL oder Referrer.
 - **Membership-RLS live:** `gt_sessions` und `gt_exercises` verlangen im Shared-Supabase-Projekt zusätzlich zur Auth-Session eine aktive `private_app_memberships`-Zeile für `gym`. Globale Sign-ups bleiben wegen anderer Apps aktiv, öffnen aber keine Gym-Daten.
 - **Produktions-Env umgestellt:** Service-Key, Gym-Audience-Secret, Gate-Origin und zentrale Drei-Adressen-Allowlist sind gesetzt; das alte gemeinsame Handoff-Secret ist entfernt.
+- **Dependency-Sicherheitsstand angehoben:** Next.js, React und `eslint-config-next` auf den gepatchten 16.2.10-/19.2.4-Stand gezogen; `ws` und Next-internes PostCSS überschrieben. Voll- und Produktions-Audit melden null Schwachstellen.
 - **Security-Notblock 2026-07-14:** Der alte signierte Session-Handoff ist entfernt; `/auth/handoff` antwortet nur noch mit `410 Gone`. Dieser Zwischenstand leitete vorübergehend zum lokalen Gym-Login, bevor der opake Einmal-Code aktiviert wurde.
 - **Callback-Redirect gehärtet:** Protokoll-relative, Backslash-, Steuerzeichen- sowie mehrfach kodierte `next`-Ziele fallen jetzt auf `/private` zurück.
 - **P0 geschlossen:** Das Shared-Supabase-Projekt erlaubt wegen anderer Apps weiterhin öffentliche Sign-ups, aber Gym-RLS verlangt nun zusätzlich eine aktive `gym`-Mitgliedschaft.
