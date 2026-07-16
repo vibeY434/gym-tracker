@@ -22,6 +22,7 @@ import {
 import {
   gymTrackerAuthRequired,
   privateAppOrigin,
+  privateGateOrigin,
   supabase,
   supabaseConfigMissing,
 } from "@/lib/supabase";
@@ -264,6 +265,43 @@ export function GymTrackerPrivate({ loginError }: GymTrackerPrivateProps) {
 
     void boot();
   }, [authLoading, authSession, loadDeviceOptions, loadSessions]);
+
+  useEffect(() => {
+    if (
+      !gymTrackerAuthRequired ||
+      authLoading ||
+      authSession ||
+      loginError ||
+      supabaseConfigMissing
+    ) {
+      return;
+    }
+
+    const gateAttemptKey = "gym-tracker-private-gate-redirect-attempted";
+    const attempted = window.sessionStorage.getItem(gateAttemptKey);
+
+    if (attempted) {
+      setLoginNotice(
+        "Der Private-Gate-Handoff konnte keine Gym-Session öffnen. Melde dich hier mit Passwort oder Magic Link an.",
+      );
+      return;
+    }
+
+    const handoffUrl = new URL("/go/gym", privateGateOrigin);
+    const nextPath = `${window.location.pathname}${window.location.search}`;
+
+    window.sessionStorage.setItem(gateAttemptKey, "true");
+    handoffUrl.searchParams.set("next", nextPath.startsWith("/") ? nextPath : "/private");
+    window.location.replace(handoffUrl.toString());
+  }, [authLoading, authSession, loginError]);
+
+  useEffect(() => {
+    if (!authSession) {
+      return;
+    }
+
+    window.sessionStorage.removeItem("gym-tracker-private-gate-redirect-attempted");
+  }, [authSession]);
 
   useEffect(() => {
     if (!selectedSessionId) {
@@ -752,12 +790,12 @@ export function GymTrackerPrivate({ loginError }: GymTrackerPrivateProps) {
               <p className="text-sm font-medium uppercase tracking-wide text-zinc-500">Gym Tracker</p>
               <h1 className="mt-1 text-3xl font-semibold">Privater Bereich</h1>
               <p className="mt-2 max-w-xl text-sm text-zinc-600">
-                Bevorzugter Einstieg ist jetzt w3yh.xyz/private. Wenn du oft Geräte wechselst, nutz hier E-Mail und Passwort; Magic Link bleibt nur der Fallback.
+                Das Private Gate prüft den zentralen App-Zugriff und öffnet danach per kurzlebigem Einmal-Code eine lokale Gym-Session.
               </p>
             </div>
             <div className="flex flex-wrap gap-3">
               <Link
-                href="https://w3yh.xyz/private/go/gym"
+                href={`${privateGateOrigin}/go/gym?next=%2Fprivate`}
                 className="inline-flex items-center justify-center rounded-xl bg-zinc-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-zinc-700"
               >
                 Über Private Gate öffnen
@@ -816,7 +854,7 @@ export function GymTrackerPrivate({ loginError }: GymTrackerPrivateProps) {
           </form>
 
           <p className="mt-4 text-sm text-zinc-600">
-            Noch kein Passwort gesetzt? Einmalig per Magic Link oder über das Private Gate rein, dann dort ein Passwort speichern.
+            Passwort und Magic Link bleiben als direkter Fallback erhalten.
           </p>
 
           {loginNotice ? (
@@ -834,9 +872,10 @@ export function GymTrackerPrivate({ loginError }: GymTrackerPrivateProps) {
           <div className="mt-6 rounded-xl border border-zinc-200 bg-zinc-50 p-4 text-sm text-zinc-700">
             <p className="font-semibold text-zinc-900">Damit das live wirklich dicht ist:</p>
             <ul className="mt-2 list-disc space-y-1 pl-5">
-              <li>in Supabase die offenen Policies mit <code>migrations/002_authenticated_access.sql</code> ersetzen</li>
-              <li>nur erlaubte Nutzer einladen oder öffentliche Signups abschalten</li>
+              <li>für den Nutzer eine aktive <code>private_app_memberships</code>-Zeile mit <code>app_slug=gym</code> pflegen</li>
+              <li>die Membership-RLS auf <code>gt_sessions</code> und <code>gt_exercises</code> aktiv halten</li>
               <li><code>GYM_ALLOWED_EMAILS</code> und <code>NEXT_PUBLIC_GYM_TRACKER_REQUIRE_AUTH=true</code> setzen</li>
+              <li>Service-Key und Gym-Audience-Secret ausschließlich serverseitig setzen</li>
               <li>
                 in Supabase Auth die Redirect URL auf{" "}
                 <code>{privateAppOrigin ? `${privateAppOrigin}/auth/callback?next=%2Fprivate` : "/auth/callback?next=%2Fprivate"}</code> setzen
@@ -846,9 +885,8 @@ export function GymTrackerPrivate({ loginError }: GymTrackerPrivateProps) {
               <p className="mt-2 text-xs text-zinc-500">Redirect-Origin aktuell: {privateAppOrigin}</p>
             ) : null}
             <p className="mt-2 text-xs text-zinc-500">
-              Fuer den Gate-Handoff braucht die App zusaetzlich{" "}
-              <code>W3YH_PRIVATE_HANDOFF_SECRET</code> mit demselben Wert wie im
-              zentralen Gate unter <code>w3yh.xyz/private</code>.
+              Der Gate-Handoff überträgt keine Supabase-Session in der URL,
+              sondern löst einen opaken Einmal-Code serverseitig ein.
             </p>
           </div>
         </section>

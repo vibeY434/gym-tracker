@@ -10,8 +10,8 @@ export default function HomePage() {
         </h1>
         <p className="mt-4 max-w-3xl text-base text-zinc-600">
           Der öffentliche Modus läuft ohne Datenbank und ist für Copy-Paste gedacht. Die private
-          Version bleibt für deine gespeicherten Sessions und wird auf Login plus saubere Policies
-          vorbereitet.
+          Version ist für gespeicherte Sessions gedacht und hängt am w3yh Private Gate plus
+          sauberen Policies.
         </p>
       </section>
 
@@ -40,8 +40,8 @@ export default function HomePage() {
           <p className="text-sm font-medium uppercase tracking-wide text-zinc-500">Privat</p>
           <h2 className="mt-2 text-2xl font-semibold">Trainingsdatenbank</h2>
           <p className="mt-3 text-sm leading-6 text-zinc-600">
-            Deine gespeicherten Sessions mit Verlauf, Duplizieren und späterem Login-Zwang über
-            Magic Link statt Passwort-Zirkus.
+            Deine gespeicherten Sessions mit Verlauf, Duplizieren und Passwortmanager-Alltag über
+            das Private Gate. Magic Link bleibt nur der Fallback.
           </p>
           <ul className="mt-4 list-disc space-y-1 pl-5 text-sm text-zinc-700">
             <li>Supabase-gestützt für Sessions und Historie</li>
@@ -49,10 +49,10 @@ export default function HomePage() {
             <li>geeignet für deine eigene Nutzung oder kleine Family-Allowlist</li>
           </ul>
           <Link
-            href="/private"
+            href="https://private.w3yh.xyz/go/gym"
             className="mt-6 inline-flex items-center justify-center rounded-xl border border-zinc-300 px-4 py-2 text-sm font-semibold text-zinc-700 transition hover:border-zinc-900 hover:text-zinc-900"
           >
-            Private Version öffnen
+            Über Private Gate öffnen
           </Link>
         </article>
       </section>

@@ -8,12 +8,59 @@ interface PendingCookieMutation {
   value: string;
 }
 
-function safeNextPath(value: string | null) {
-  if (!value || !value.startsWith("/")) {
-    return "/private";
+function hasUnsafeNextPathSyntax(value: string): boolean {
+  let candidate = value;
+
+  for (let pass = 0; pass < 3; pass += 1) {
+    if (
+      !candidate ||
+      candidate[0] !== "/" ||
+      candidate[1] === "/" ||
+      candidate[1] === "\\" ||
+      /[\\\u0000-\u001f\u007f]/.test(candidate)
+    ) {
+      return true;
+    }
+
+    try {
+      const decoded = decodeURIComponent(candidate);
+
+      if (decoded === candidate) {
+        return false;
+      }
+
+      candidate = decoded;
+    } catch {
+      return true;
+    }
   }
 
-  return value;
+  return true;
+}
+
+function safeNextPath(value: string | null) {
+  const fallbackPath = "/private";
+  const baseUrl = new URL("https://gym.w3yh.invalid");
+
+  if (!value || hasUnsafeNextPathSyntax(value)) {
+    return fallbackPath;
+  }
+
+  try {
+    const targetUrl = new URL(value, baseUrl);
+    const normalizedPath = `${targetUrl.pathname}${targetUrl.search}${targetUrl.hash}`;
+
+    if (
+      targetUrl.origin !== baseUrl.origin ||
+      hasUnsafeNextPathSyntax(normalizedPath)
+    ) {
+      return fallbackPath;
+    }
+
+    return normalizedPath;
+  } catch {
+    return fallbackPath;
+  }
 }
 
 function createRedirectResponse(

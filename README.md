@@ -3,7 +3,7 @@
 Gym-Tracker mit zwei getrennten Modi:
 
 - **`/one-shot`**: öffentlich, ohne Datenbank, mit Copy-Paste-Export
-- **`/private`**: private Supabase-Version mit Session-Historie und vorbereitetem Magic-Link-Login
+- **`/private`**: private Supabase-Version mit Session-Historie; bevorzugter Einstieg läuft über das w3yh Private Gate, Magic Link bleibt Fallback
 
 ## Unterstützte Anforderungen
 
@@ -36,8 +36,8 @@ Gym-Tracker mit zwei getrennten Modi:
 
 ## Setup
 
-Der genaue PC-Fahrplan fuer Auth, Redirects und Vercel-Env liegt in [`SUPABASE_SETUP.md`](./SUPABASE_SETUP.md).
-Als schnelle Startbasis liegt jetzt ausserdem eine [`.env.example`](./.env.example) fuer lokale und Vercel-Variablen im Repo.
+Der genaue PC-Fahrplan für Auth, Redirects und Vercel-Env liegt in [`SUPABASE_SETUP.md`](./SUPABASE_SETUP.md).
+Als schnelle Startbasis liegt jetzt außerdem eine [`.env.example`](./.env.example) für lokale und Vercel-Variablen im Repo.
 
 1. Abhängigkeiten installieren:
 
@@ -45,7 +45,7 @@ Als schnelle Startbasis liegt jetzt ausserdem eine [`.env.example`](./.env.examp
 npm install
 ```
 
-2. In Supabase SQL Editor zuerst [`schema.sql`](./schema.sql), dann [`equipment.sql`](./equipment.sql) und für bestehende offene Installationen zusätzlich [`migrations/002_authenticated_access.sql`](./migrations/002_authenticated_access.sql) ausführen.
+2. Für ein eigenes Supabase-Projekt zuerst [`schema.sql`](./schema.sql) und [`equipment.sql`](./equipment.sql) ausführen. Im geteilten W3YH-Projekt werden App-Mitgliedschaft und RLS zentral über die W3YH-Migrationen verwaltet.
 
 3. `.env.local` erstellen:
 
@@ -54,9 +54,12 @@ NEXT_PUBLIC_SUPABASE_URL=https://<dein-projekt>.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=<dein-anon-key>
 NEXT_PUBLIC_GYM_TRACKER_ORIGIN=https://gym.w3yh.xyz
 NEXT_PUBLIC_GYM_TRACKER_REQUIRE_AUTH=false
-W3YH_PRIVATE_HANDOFF_SECRET=<derselbe-wert-wie-im-private-gate>
+NEXT_PUBLIC_W3YH_PRIVATE_GATE_ORIGIN=https://private.w3yh.xyz
 # optional für den privaten Login-Flow:
 # GYM_ALLOWED_EMAILS=mail1@example.com,mail2@example.com
+# nur serverseitig:
+# SUPABASE_SECRET_KEY=<secret-oder-service-role-key>
+# W3YH_PRIVATE_HANDOFF_GYM_REDEEM_SECRET=<mindestens-32-zufallszeichen>
 ```
 
 4. App starten:
@@ -72,15 +75,17 @@ npm run dev
 - `NEXT_PUBLIC_SUPABASE_URL`
 - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
 - `NEXT_PUBLIC_GYM_TRACKER_ORIGIN`
+- `NEXT_PUBLIC_W3YH_PRIVATE_GATE_ORIGIN`
 - optional `NEXT_PUBLIC_GYM_TRACKER_REQUIRE_AUTH=true`
 - optional `GYM_ALLOWED_EMAILS=...`
-- optional `W3YH_PRIVATE_HANDOFF_SECRET=...` fuer signierten Gate-Handoff
+- `SUPABASE_SECRET_KEY` oder `SUPABASE_SERVICE_ROLE_KEY` nur serverseitig
+- `W3YH_PRIVATE_HANDOFF_GYM_REDEEM_SECRET` nur serverseitig
 
 ## Hinweise
 
 - Die öffentliche Vorlage unter `/one-shot` speichert nur lokal im Browser und schreibt **nicht** nach Supabase zurück.
-- Die private Version unter `/private` ist auf Magic-Link-Login vorbereitet. Der Route-Handler sitzt unter `src/app/api/auth/magic-link/route.ts`.
-- Fuer das neue Private-Gate kann Gym ausserdem `src/app/auth/handoff/route.ts` verwenden, um eine bestehende Session vom zentralen Gate lokal auf `gym.w3yh.xyz` zu uebernehmen. Solange die Alias-Domain noch fehlt, ist `https://w3yh.xyz/private/go/gym` der reale Live-Pfad.
-- Die Repo-SQL-Dateien sind jetzt auf **`authenticated` statt `public`** gestellt. Für Altbestände brauchst du das Nachzieh-Script `migrations/002_authenticated_access.sql`.
-- Für echte Abschottung reicht der Code allein nicht: In Supabase Auth sollten öffentliche Signups aus oder nur explizit eingeladene Nutzer aktiv sein.
+- Die private Version unter `/private` hat einen direkten Passwort-/Magic-Link-Fallback. Primär läuft der Einstieg über `https://private.w3yh.xyz/go/gym`.
+- Das Private Gate sendet einen kurzlebigen Einmal-Code per `POST` an `/auth/gate`. Gym löst ihn serverseitig ein, prüft Nutzer, Allowlist und App-Mitgliedschaft erneut und mintet eine lokale hostgebundene Session.
+- `src/app/auth/handoff/route.ts` lehnt den alten signierten Session-Handoff dauerhaft mit `410 Gone` ab.
+- Im geteilten Hosted-Supabase-Projekt bleiben globale Sign-ups wegen `meindeinunser` aktiv. Gym-Daten sind trotzdem über `private_app_memberships` plus RLS verriegelt; die Rolle `authenticated` allein reicht nicht.
 - Für die komplette PC-Checkliste: [`SUPABASE_SETUP.md`](./SUPABASE_SETUP.md).

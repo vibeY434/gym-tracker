@@ -3,7 +3,16 @@
 ## v1.1.0 — 2026-04-13 (In Progress)
 
 ### Architektur & Sicherheit
-- **Cookie-basierte Browser-Session vereinheitlicht:** `src/lib/supabase.ts` nutzt jetzt `@supabase/ssr` statt des alten Plain-Clients. Damit lesen privater Browser-Login, Magic-Link-Rückkehr und Gate-Handoff dieselbe Session-Art statt aneinander vorbeizulaufen.
+- **Einmal-Code-Handoff produktionsreif:** Neue Route `POST /auth/gate` akzeptiert den opaken Code ausschließlich von `https://private.w3yh.xyz`, löst ihn mit eigenem Gym-Audience-Secret serverseitig ein und mintet per `generateLink` plus `verifyOtp` eine lokale Session. Der Code steht nicht in URL oder Referrer.
+- **Membership-RLS live:** `gt_sessions` und `gt_exercises` verlangen im Shared-Supabase-Projekt zusätzlich zur Auth-Session eine aktive `private_app_memberships`-Zeile für `gym`. Globale Sign-ups bleiben wegen anderer Apps aktiv, öffnen aber keine Gym-Daten.
+- **Produktions-Env umgestellt:** Service-Key, Gym-Audience-Secret, Gate-Origin und zentrale Drei-Adressen-Allowlist sind gesetzt; das alte gemeinsame Handoff-Secret ist entfernt.
+- **Security-Notblock 2026-07-14:** Der alte signierte Session-Handoff ist entfernt; `/auth/handoff` antwortet nur noch mit `410 Gone`. Dieser Zwischenstand leitete vorübergehend zum lokalen Gym-Login, bevor der opake Einmal-Code aktiviert wurde.
+- **Callback-Redirect gehärtet:** Protokoll-relative, Backslash-, Steuerzeichen- sowie mehrfach kodierte `next`-Ziele fallen jetzt auf `/private` zurück.
+- **P0 geschlossen:** Das Shared-Supabase-Projekt erlaubt wegen anderer Apps weiterhin öffentliche Sign-ups, aber Gym-RLS verlangt nun zusätzlich eine aktive `gym`-Mitgliedschaft.
+- **Private-Gate-Redirect nachgezogen:** `/private` schickt Nutzer ohne lokale Gym-Session einmal zum zentralen Gate. Nach dem Einmal-Code-Handoff landet die lokale Session direkt wieder in `/private`; Passwort und Magic Link bleiben Fallback.
+- **Supabase-Public-Key korrigiert:** Der produktive `NEXT_PUBLIC_SUPABASE_ANON_KEY` war im Gym-Projekt falsch mit einem stärkeren Supabase-Key bestückt. Local Env und Vercel Production/Preview/Development sind auf den echten Anon-Key gezogen, Gym wurde neu deployt (`dpl_EV7A3HnqQDy45kaxVzvZ16G96n9V`) und ältere Gym-Deployments wurden aus Vercel entfernt.
+- **Startseiten-Copy auf Private Gate aktualisiert:** Die öffentliche Startseite bewirbt für die private Trainingsdatenbank jetzt den Weg über `https://w3yh.xyz/private/go/gym`, Passwortmanager-Alltag und Magic Link nur als Fallback. README und `SUPABASE_SETUP.md` sind auf denselben Primärpfad gezogen.
+- **Cookie-basierte Browser-Session vereinheitlicht:** `src/lib/supabase.ts` nutzt jetzt `@supabase/ssr` statt des alten Plain-Clients. Damit lesen privater Browser-Login und Magic-Link-Rückkehr dieselbe Session-Art statt aneinander vorbeizulaufen.
 - **Auth-Callback ergänzt:** `src/app/auth/callback/route.ts` tauscht Mail-Link- oder Recovery-Token jetzt serverseitig in eine echte App-Session für `gym.w3yh.xyz`. Die Magic-Link-API zeigt dafür nicht mehr stumpf auf `/private`, sondern auf den Callback.
 - **Fallback-Login auf Passwort erweitert:** `/private` akzeptiert jetzt zusätzlich E-Mail plus Passwort; Magic Link bleibt nur noch der Fallback. Die Copy erklärt jetzt auch hier klar, dass das Private Gate der erste Weg und der Passwortmanager danach der bequemste Alltagspfad ist.
 - **Öffentliche und private Variante getrennt:** Root ist jetzt ein Einstieg mit klarer Trennung zwischen öffentlicher One-Shot-Vorlage (`/one-shot`) und privater Supabase-Version (`/private`).
